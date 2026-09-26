@@ -140,11 +140,11 @@ def render_batch_report(
             f"注册 {fmt_ms(slow_reg.timings.get('register'))}s）："
         )
         d = slow_reg.timings["register_detail"]
-        # 🔴 这些键是**计数/文本**，不是毫秒 —— 混进去会打印成 "0.00s"，
-        #    看着像个耗时。
+        # 🔴 计数 / 文本 / 布尔都**不是毫秒** —— 混进去会打印成 "0.00s"，
+        #    看着像个耗时（`bool` 是 `int` 子类，必须显式排除）。
         NON_MS = {"mail_polls", "mail_5xx", "mail_subject", "activation_token"}
         for k, v in d.items():
-            if k.endswith("_ms") or k in NON_MS:
+            if k.endswith("_ms") or k in NON_MS or isinstance(v, bool):
                 continue
             print(f"  {k:16s} {v / 1000:6.2f}s")
         polls = d.get("mail_polls")
@@ -154,6 +154,18 @@ def render_batch_report(
             print(f"  {'收信轮询':14s} {polls:6d} 次 /api/inbox{extra}")
         if d.get("mail_subject"):
             print(f"  {'邮件主题':14s} {d['mail_subject']}")
+
+    # ── 激活自愈（站点坏链接 → 重发）───────────────────────────
+    resent = [
+        r
+        for r in results
+        if ((r.timings or {}).get("register_detail") or {}).get("activate_resent")
+    ]
+    if resent:
+        print(
+            f"\nℹ {len(resent)} 个账号触发了**激活邮件重发**"
+            f"（站点坏链接 → 自动重发 + 用最新邮件重试）"
+        )
 
     # ── 注册耗时分布 ──────────────────────────────────────────
     regs = sorted(r.timings.get("register", 0) / 1000 for r in results if r.timings.get("register"))

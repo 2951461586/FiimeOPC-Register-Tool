@@ -326,5 +326,18 @@ class TestEgressDisplay:
         assert "res-2498c101c6b " not in out, "尾字符不能丢"
 
 
+class TestSelfHealDisplay:
+    def test_resend_flag_not_rendered_as_seconds(self, capsys):
+        """`activate_resent` 是布尔，不能当耗时打印成 `0.00s`；且要单独报出来。"""
+        r = _ok("a@x.com")
+        r.timings = {
+            "register": 1000,
+            "register_detail": {"register_call": 500, "activate_resent": True},
+        }
+        out = _render([r], capsys)
+        assert "activate_resent  " not in out, "布尔被当成耗时打印了"
+        assert "激活邮件重发" in out, "自愈发生时要单独报出来"
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
