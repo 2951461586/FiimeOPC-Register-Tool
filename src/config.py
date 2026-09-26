@@ -268,6 +268,13 @@ PROXY = os.getenv("FO_PROXY", "").strip()
 PROXY_SCOPE_MODE = os.getenv("FO_PROXY_SCOPE_MODE", "egress").strip().lower() or "egress"
 PROXY_SCOPE_MODES = ("egress", "session")
 
+# scheme-less 代理串（`host:port:user:pass`）默认用哪个协议。
+# `http` 兼容多数本地/HTTP 代理；动态住宅走 SOCKS5 时设 `socks5`。
+# ⚠ SOCKS5 需要 PySocks（`pip install "requests[socks]"`），否则 requests 会报
+#    `InvalidSchema: Missing dependencies for SOCKS support`。
+PROXY_SCHEME = os.getenv("FO_PROXY_SCHEME", "http").strip().lower() or "http"
+PROXY_SCHEMES = ("http", "https", "socks5", "socks5h")
+
 # 槽位被判"这个出口的每日配额已满"后冷却多久（秒）。
 # ⚠ 每日配额是**当天**恢复的，所以冷却不该短于"跑到明天"。
 #   但设 24h 会让"偶发一次 429 抖动"的出口整天闲置。
@@ -320,6 +327,7 @@ def normalize_proxy(raw: str) -> str:
     """代理串 → `scheme://user:pass@host:port`；空串原样返回。
 
     支持 `host:port:user:pass`、`scheme://user:pass@host:port`、`http://host:port`。
+    scheme-less 的两种形式用 `FO_PROXY_SCHEME`（默认 `http`；住宅 SOCKS5 设 `socks5`）。
 
     🔴 抽成**公开函数**，是因为槽位清单也要用它：住宅代理在清单里写的是
       `host:port:user:pass`，不规范化的话 `slot_scope()` 的
@@ -332,9 +340,9 @@ def normalize_proxy(raw: str) -> str:
     parts = raw.split(":")
     if len(parts) == 4:
         host, port, user, pwd = parts
-        return f"http://{user}:{pwd}@{host}:{port}"
+        return f"{PROXY_SCHEME}://{user}:{pwd}@{host}:{port}"
     if len(parts) == 2:
-        return f"http://{raw}"
+        return f"{PROXY_SCHEME}://{raw}"
     raise ValueError(
         f"代理串格式无法识别：{raw!r}（期望 host:port:user:pass 或 scheme://user:pass@host:port）"
     )
@@ -491,6 +499,10 @@ def validate(*, need_worker_token: bool = True) -> list[str]:
         missing.append(
             f"FO_PROXY_SCOPE_MODE（未知取值 {PROXY_SCOPE_MODE!r}，"
             f"只认 {' / '.join(PROXY_SCOPE_MODES)}）"
+        )
+    if PROXY_SCHEME not in PROXY_SCHEMES:
+        missing.append(
+            f"FO_PROXY_SCHEME（未知取值 {PROXY_SCHEME!r}，只认 {' / '.join(PROXY_SCHEMES)}）"
         )
     if has_slots and not SLOT_EGRESS_IPS and PROXY_SCOPE_MODE != "session":
         missing.append(

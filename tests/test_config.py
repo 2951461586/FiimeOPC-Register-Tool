@@ -242,6 +242,14 @@ class TestValidate:
         monkeypatch.setattr(config, "PROXY_SCOPE_MODE", "bogus")
         assert any("FO_PROXY_SCOPE_MODE" in m for m in config.validate())
 
+    def test_unknown_proxy_scheme_is_reported(self, monkeypatch):
+        monkeypatch.setattr(config, "MAILBOX_KIND", "worker")
+        monkeypatch.setattr(config, "WORKER_ADMIN_TOKEN", "x")
+        monkeypatch.setattr(config, "IR_PROXY_SLOTS", "")
+        monkeypatch.setattr(config, "IR_PROXY_SLOTS_FILE", "")
+        monkeypatch.setattr(config, "PROXY_SCHEME", "ftp")
+        assert any("FO_PROXY_SCHEME" in m for m in config.validate())
+
 
 # ── slot_scope / proxy_slots ──────────────────────────────────────
 class TestSlotScope:
@@ -280,7 +288,8 @@ class TestSlotScope:
 class TestNormalizeProxy:
     """代理串规范化 —— 住宅代理写的是 `host:port:user:pass`。"""
 
-    def test_four_part_becomes_url(self):
+    def test_four_part_becomes_url(self, monkeypatch):
+        monkeypatch.setattr(config, "PROXY_SCHEME", "http")
         raw = "res.example.com:2000:u-region-US-sid-AAA111-t-1:pw"
         assert config.normalize_proxy(raw) == (
             "http://u-region-US-sid-AAA111-t-1:pw@res.example.com:2000"
@@ -290,8 +299,21 @@ class TestNormalizeProxy:
         u = "http://127.0.0.1:7901"
         assert config.normalize_proxy(u) == u
 
-    def test_two_part_gets_scheme(self):
+    def test_two_part_gets_scheme(self, monkeypatch):
+        monkeypatch.setattr(config, "PROXY_SCHEME", "http")
         assert config.normalize_proxy("1.2.3.4:8080") == "http://1.2.3.4:8080"
+
+    def test_scheme_comes_from_config(self, monkeypatch):
+        """scheme-less 的协议由 `FO_PROXY_SCHEME` 决定（住宅 SOCKS5）。"""
+        monkeypatch.setattr(config, "PROXY_SCHEME", "socks5")
+        assert config.normalize_proxy("res.example.com:2000:u:p") == (
+            "socks5://u:p@res.example.com:2000"
+        )
+
+    def test_explicit_scheme_wins(self, monkeypatch):
+        """已经带 `://` 的串不再套 `FO_PROXY_SCHEME`。"""
+        monkeypatch.setattr(config, "PROXY_SCHEME", "socks5")
+        assert config.normalize_proxy("http://127.0.0.1:7901") == "http://127.0.0.1:7901"
 
     def test_empty_stays_empty(self):
         assert config.normalize_proxy("") == ""
@@ -363,6 +385,7 @@ class TestProxySlots:
 
     def test_normalizes_residential_form(self, monkeypatch):
         """住宅代理写 `host:port:user:pass` —— 清单读出来必须是完整 URL。"""
+        monkeypatch.setattr(config, "PROXY_SCHEME", "http")
         monkeypatch.setattr(config, "IR_PROXY_SLOTS_FILE", "")
         monkeypatch.setattr(
             config,

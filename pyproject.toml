@@ -10,7 +10,9 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
 dependencies = [
-    "requests>=2.31",
+    # 🔴 `[socks]` 拉入 PySocks —— 动态住宅代理走 SOCKS5 时必须；
+    #    不用 SOCKS5 时它无害（纯 Python 小包）。
+    "requests[socks]>=2.31",
 ]
 
 # 🔴 本链**不需要 playwright / cryptography** —— 与参考项目
@@ -18,7 +20,7 @@ dependencies = [
 #      · 注册无验证码（实测 `/api/settings/public` 返回 captchaEnabled=false）
 #      · 登录无验证码、无 2FA（实测 POST /api/auth/login 直接返回 user）
 #      · 密码是**明文 POST**（站点前端不做 RSA 加密，实测请求体就是原密码）
-#    整链纯 HTTP，所以依赖只有 requests。
+#    整链纯 HTTP，所以依赖只有 requests（SOCKS5 代理另加 PySocks，见上）。
 [project.optional-dependencies]
 dev = [
     "pytest>=8",
