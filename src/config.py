@@ -376,22 +376,29 @@ _SID_RE = re.compile(r"sid[-_]([A-Za-z0-9]+)", re.I)
 def _session_scope(url: str) -> str:
     """动态住宅代理 → 记账 scope = **会话标识**。
 
-    同一 `host:port` 下每个 `sid-XXXX` 是一个独立出口，所以 scope 取
-    `host:port:sid-XXXX`；没有 sid 时用 userinfo 的稳定哈希兜底。
+    两种形态，区别在于**凭据在哪里**：
+      · 有 userinfo（`scheme://user:pass@host:port`）—— host 不是秘密，scope
+        取 `host:port:sid-XXXX`（有 sid）或 `host:port:<hash(userinfo)>`。密码
+        本身**绝不进 scope**。
+      · 无 userinfo（`scheme://<token>.provider.tld:port`）—— 🔴 **子域 token
+        就是凭据**，host 绝不能落盘/进日志，所以 scope 退化成
+        `res-<sha256(完整 URL)[:12]>`（唯一且不可逆）。
 
-    🔴 **绝不把密码写进 scope** —— scope 会落进配额 JSONL 与池子状态文件，
-      而这两个文件经常被贴出来排查。
+    🔴 scope 会落进配额 JSONL 与池子状态文件，而这两个文件经常被贴出来排查。
     """
+    norm = normalize_proxy(url)
     try:
-        p = urlparse(normalize_proxy(url))
+        p = urlparse(norm)
     except ValueError:
-        return url
+        return norm
+    host, port = p.hostname or "?", p.port or 0
     blob = f"{p.username or ''}:{p.password or ''}"
-    m = _SID_RE.search(blob)
-    if m:
-        return f"{p.hostname or '?'}:{p.port or 0}:sid-{m.group(1)}"
-    h = hashlib.sha256(blob.encode("utf-8")).hexdigest()[:8]
-    return f"{p.hostname or '?'}:{p.port or 0}:{h}"
+    if blob.strip(":"):
+        m = _SID_RE.search(blob)
+        ident = f"sid-{m.group(1)}" if m else hashlib.sha256(blob.encode("utf-8")).hexdigest()[:10]
+        return f"{host}:{port}:{ident}"
+    digest = hashlib.sha256(norm.encode("utf-8")).hexdigest()[:12]
+    return f"res-{digest}"
 
 
 def slot_scope(url: str) -> str:

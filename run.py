@@ -44,7 +44,7 @@ from src.pipeline import (  # noqa: E402
     run_batch,
     run_one,
 )
-from src.redact import redact_url  # noqa: E402
+from src.redact import redact_proxy  # noqa: E402
 
 
 def _print_pool_summary() -> int:
@@ -96,7 +96,7 @@ def _print_pool_summary() -> int:
                 mark = f"余 {left}"
             dup = "" if first else "（与前面的槽位同出口，额度已计入）"
             print(
-                f"     slot{i} {redact_url(url):<24} 出口 {ip:<16} "
+                f"     slot{i} {redact_proxy(url):<24} 出口 {ip:<16} "
                 f"{st.used:>2}/{st.limit}  {mark}{dup}",
                 flush=True,
             )
@@ -168,7 +168,7 @@ def _cmd_probe() -> int:
     if slots:
         alive = proxypool.check_slots_alive(slots)
         for i, ok in alive.items():
-            print(f"  slot{i + 1} {redact_url(slots[i]):<24} {'✓ 监听中' if ok else '✗ 连不上'}")
+            print(f"  slot{i + 1} {redact_proxy(slots[i]):<24} {'✓ 监听中' if ok else '✗ 连不上'}")
         if not any(alive.values()):
             print("  ✗ 一个槽位都连不上 —— 池子没起来。跑 README「起槽位池」那三条命令。")
             rc = rc or 4

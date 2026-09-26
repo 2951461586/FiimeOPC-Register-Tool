@@ -352,6 +352,16 @@ class TestSessionScope:
         assert s1 == s2, "scope 必须稳定（否则每次记到新桶）"
         assert "pw" not in s1
 
+    def test_host_only_proxy_hashes_the_token(self, monkeypatch):
+        """🔴 无 userinfo 时子域 token **就是凭据** —— scope 必须哈希掉它。"""
+        monkeypatch.setattr(config, "SLOT_EGRESS_IPS", {})
+        monkeypatch.setattr(config, "PROXY_SCOPE_MODE", "session")
+        a = "https://tokAAA.hub.example.com:7161"
+        b = "https://tokBBB.hub.example.com:7161"
+        sa, sb = config.slot_scope(a), config.slot_scope(b)
+        assert sa != sb, "不同 token 必须分到不同桶"
+        assert "tokAAA" not in sa and "hub.example.com" not in sa, "token host 不能进 scope"
+
     def test_egress_mode_still_refuses_unknown_port(self, monkeypatch):
         monkeypatch.setattr(config, "SLOT_EGRESS_IPS", {})
         monkeypatch.setattr(config, "PROXY_SCOPE_MODE", "egress")

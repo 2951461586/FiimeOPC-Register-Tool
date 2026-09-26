@@ -74,7 +74,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from . import config, fsutil
-from .redact import redact_url
+from .redact import redact_proxy
 
 __all__ = [
     "SlotLease",
@@ -153,9 +153,10 @@ class SlotLease:
     egress: str = ""  # 出口 IP（拿不到时为空串）
 
     def __str__(self) -> str:
-        # 🔴 走 `redact_url` —— `url` 可能带账密，原样打印会写进日志。
+        # 🔴 走 `redact_proxy` —— `url` 可能带账密，也可能是“子域即凭据”的
+        #    住宅串；原样打印会把凭据写进日志、池子告警与状态文件。
         ip = f"@{self.egress}" if self.egress else ""
-        return f"slot{self.slot + 1}({redact_url(self.url)}){ip}"
+        return f"slot{self.slot + 1}({redact_proxy(self.url)}){ip}"
 
 
 class NoEligibleSlot(RuntimeError):

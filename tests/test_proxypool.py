@@ -32,6 +32,22 @@ def test_egress_mode_key_stays_host_port(monkeypatch):
     assert proxypool._state_key("http://127.0.0.1:7901") == "127.0.0.1:7901"
 
 
+def test_host_only_proxy_key_is_hashed(monkeypatch):
+    """🔴 “子域即凭据”的代理，状态键绝不能包含那个子域。"""
+    monkeypatch.setattr(proxypool.config, "SLOT_EGRESS_IPS", {})
+    monkeypatch.setattr(proxypool.config, "PROXY_SCOPE_MODE", "session")
+    k = proxypool._state_key("https://tokAAA.hub.example.com:7161")
+    assert "tokAAA" not in k and "hub.example.com" not in k
+
+
+def test_host_only_proxies_get_distinct_keys(monkeypatch):
+    monkeypatch.setattr(proxypool.config, "SLOT_EGRESS_IPS", {})
+    monkeypatch.setattr(proxypool.config, "PROXY_SCOPE_MODE", "session")
+    a = proxypool._state_key("https://tokAAA.hub.example.com:7161")
+    b = proxypool._state_key("https://tokBBB.hub.example.com:7161")
+    assert a != b, "不同会话不能共用一条冷却记录"
+
+
 def test_pool_egress_uses_session_scope(monkeypatch, tmp_path):
     """建池时 `session` 模式必须把每个会话当成独立出口（distinct=2）。"""
     monkeypatch.setattr(proxypool.config, "SLOT_EGRESS_IPS", {})
