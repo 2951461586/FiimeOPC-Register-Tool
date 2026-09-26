@@ -29,8 +29,12 @@ class TestExitCodes:
 
     def test_zero_is_only_success(self):
         assert cli.EXIT_OK == 0
-        for name in ("EXIT_QUOTA_EXCEEDED", "EXIT_NO_SHRINK",
-                     "EXIT_ALL_SLOTS_DEAD", "EXIT_KEY_UNVERIFIED"):
+        for name in (
+            "EXIT_QUOTA_EXCEEDED",
+            "EXIT_NO_SHRINK",
+            "EXIT_ALL_SLOTS_DEAD",
+            "EXIT_KEY_UNVERIFIED",
+        ):
             assert getattr(cli, name) != 0, name
 
     def test_matches_ledger_coverage_gap(self):
@@ -85,8 +89,7 @@ class TestArgHelpers:
 
 class TestMergeSummaryLine:
     def test_shape(self):
-        assert cli.merge_summary_line(2, 3, 0, 5) == \
-            "\n结果合并：原有 2 条 + 本次新增 3 条 = 5 条"
+        assert cli.merge_summary_line(2, 3, 0, 5) == "\n结果合并：原有 2 条 + 本次新增 3 条 = 5 条"
 
     def test_leading_newline_is_part_of_contract(self):
         """🔴 前导 `\\n` 是契约的一部分 —— 调用方直接 `print()` 它。
@@ -124,7 +127,7 @@ class TestUtf8Stdio:
         class _Plain:
             pass
 
-        cli.force_utf8_stdio(streams=[_Plain(), None])   # 不抛即可
+        cli.force_utf8_stdio(streams=[_Plain(), None])  # 不抛即可
 
     def test_swallows_reconfigure_errors(self):
         """流已关闭时 reconfigure 会抛 —— 不能因此让命令起不来。"""
@@ -133,7 +136,7 @@ class TestUtf8Stdio:
             def reconfigure(self, **kw):
                 raise ValueError("I/O operation on closed file")
 
-        cli.force_utf8_stdio(streams=[_Boom()])          # 不抛即可
+        cli.force_utf8_stdio(streams=[_Boom()])  # 不抛即可
 
     def test_is_wired_on_import(self):
         """函数必须在**导入时**就被调用（五个入口都只 import 本模块）。"""

@@ -88,9 +88,9 @@ from . import config
 from .redact import mask_key
 
 # ── 429 分类（**唯一判据点**）─────────────────────────────────────
-LIMIT_RATE = "rate"       # 速率层：60s 1 次 → 同出口退避重试
-LIMIT_IP_QUOTA = "ip_quota"   # 配额层：该 IP 今日已满 → 换出口
-LIMIT_OTHER = "other"     # 其它 429（未知文案）→ 当速率处理，但记下来
+LIMIT_RATE = "rate"  # 速率层：60s 1 次 → 同出口退避重试
+LIMIT_IP_QUOTA = "ip_quota"  # 配额层：该 IP 今日已满 → 换出口
+LIMIT_OTHER = "other"  # 其它 429（未知文案）→ 当速率处理，但记下来
 
 
 def classify_429(text: str) -> str:
@@ -241,8 +241,7 @@ class ServiceInfo:
         return tm[0] if tm else config.DEFAULT_MODEL
 
     def describe(self) -> str:
-        return (f"ok({len(self.model_ids())} models, "
-                f"max_keys={self.max_keys_per_user})")
+        return f"ok({len(self.model_ids())} models, max_keys={self.max_keys_per_user})"
 
 
 # ── 客户端 ────────────────────────────────────────────────────────
@@ -263,13 +262,15 @@ class OpcClient:
         self.proxy = proxy
         self.session = requests.Session()
         config.apply_proxy(self.session, proxy)
-        self.session.headers.update({
-            "Accept": "application/json",
-            "Accept-Language": "zh-CN",
-            "User-Agent": config.USER_AGENT,
-            "Origin": config.SITE_BASE,
-            "Referer": f"{config.SITE_BASE}/register",
-        })
+        self.session.headers.update(
+            {
+                "Accept": "application/json",
+                "Accept-Language": "zh-CN",
+                "User-Agent": config.USER_AGENT,
+                "Origin": config.SITE_BASE,
+                "Referer": f"{config.SITE_BASE}/register",
+            }
+        )
         self.csrf = ""
 
     # ── 底层请求 ──────────────────────────────────────────────
@@ -282,14 +283,20 @@ class OpcClient:
         return {"X-CSRF-Token": self.csrf} if (write and self.csrf) else {}
 
     def _get(self, path: str, params: dict = None, *, timeout: float = None) -> requests.Response:
-        return self.session.get(self._url(path), params=params,
-                                headers=self._csrf_headers(False),
-                                timeout=timeout or self.timeout)
+        return self.session.get(
+            self._url(path),
+            params=params,
+            headers=self._csrf_headers(False),
+            timeout=timeout or self.timeout,
+        )
 
     def _post(self, path: str, body: dict = None, *, timeout: float = None) -> requests.Response:
-        r = self.session.post(self._url(path), json=body,
-                              headers=self._csrf_headers(True),
-                              timeout=timeout or self.timeout)
+        r = self.session.post(
+            self._url(path),
+            json=body,
+            headers=self._csrf_headers(True),
+            timeout=timeout or self.timeout,
+        )
         # 站点在响应头里回传轮换后的 token（`x-csrf-token`），收下。
         tok = r.headers.get("x-csrf-token")
         if tok:
@@ -330,7 +337,7 @@ class OpcClient:
 
     def registration_state(self) -> dict:
         """注册相关的开关：`{closed, notice, blockGmailAliases, captchaEnabled}`。"""
-        return (self.public_settings().get("registration") or {})
+        return self.public_settings().get("registration") or {}
 
     # ── 用户名 ────────────────────────────────────────────────
     def check_username(self, username: str) -> dict:
@@ -349,8 +356,7 @@ class OpcClient:
         """
         last = ""
         for _ in range(attempts):
-            last = (config.USERNAME_PREFIX
-                    + "".join(random.choices(string.digits, k=6)))
+            last = config.USERNAME_PREFIX + "".join(random.choices(string.digits, k=6))
             try:
                 if self.check_username(last).get("available"):
                     return last
@@ -361,8 +367,15 @@ class OpcClient:
         return last
 
     # ── 注册 ──────────────────────────────────────────────────
-    def register(self, username: str, email: str, password: str,
-                 *, account_type: str = None, invite_code: str = "") -> RegisterResult:
+    def register(
+        self,
+        username: str,
+        email: str,
+        password: str,
+        *,
+        account_type: str = None,
+        invite_code: str = "",
+    ) -> RegisterResult:
         """`POST /api/auth/register`。
 
         🔴 调用方**必须**处理 `limit_kind`：
@@ -533,7 +546,8 @@ class OpcClient:
                     f"list_keys 失败：HTTP {r.status_code}（"
                     f"{(r.headers.get('content-type') or '?')}）"
                     f" —— 注意 `/model-service/keys` 这个路径不存在，"
-                    f"key 列表在 `GET /api/model-service` 的 `keys` 字段里")
+                    f"key 列表在 `GET /api/model-service` 的 `keys` 字段里"
+                )
             return []
         return list((r.json() or {}).get("keys") or [])
 
@@ -571,9 +585,11 @@ class OpcClient:
         )
 
     def delete_key(self, key_id: str) -> bool:
-        r = self.session.delete(self._url(f"/model-service/keys/{key_id}"),
-                                headers=self._csrf_headers(True),
-                                timeout=self.timeout)
+        r = self.session.delete(
+            self._url(f"/model-service/keys/{key_id}"),
+            headers=self._csrf_headers(True),
+            timeout=self.timeout,
+        )
         return r.ok
 
     # ── API Key 校验（OpenAI 兼容面）───────────────────────────
@@ -586,8 +602,14 @@ class OpcClient:
         return config.SITE_BASE + config.MODEL_V1_PATH
 
     @staticmethod
-    def verify_key(api_key: str, *, base: str = None, timeout: float = None,
-                   attempts: int = 1, delay: float = 3.0) -> tuple:
+    def verify_key(
+        api_key: str,
+        *,
+        base: str = None,
+        timeout: float = None,
+        attempts: int = 1,
+        delay: float = 3.0,
+    ) -> tuple:
         """用 key 打一次 `GET /v1/models`，返回 `(ok, 说明)`。
 
         🔴 **不走 Session、不带 cookie、不带代理** —— 这是刻意与账号侧
@@ -616,9 +638,11 @@ class OpcClient:
         last = ""
         for i in range(max(1, attempts)):
             try:
-                r = requests.get(url, headers={"Authorization": f"Bearer {api_key}",
-                                               "Accept": "application/json"},
-                                 timeout=timeout or config.REQUEST_TIMEOUT)
+                r = requests.get(
+                    url,
+                    headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
+                    timeout=timeout or config.REQUEST_TIMEOUT,
+                )
             except requests.RequestException as ex:
                 last = f"network: {type(ex).__name__}"
             else:
@@ -630,9 +654,11 @@ class OpcClient:
                     last = f"HTTP {r.status_code}"
                 elif "json" not in ctype:
                     # 🔴 SPA 兜底页 / 边缘层页面 —— 这**不是**一个成功的校验。
-                    last = (f"HTTP {r.status_code} 但 content-type={ctype or '?'}"
-                            f"（{len(r.text)} 字节）—— 多半打到了 SPA 兜底页，"
-                            f"检查 base_url 是否漏了 /api")
+                    last = (
+                        f"HTTP {r.status_code} 但 content-type={ctype or '?'}"
+                        f"（{len(r.text)} 字节）—— 多半打到了 SPA 兜底页，"
+                        f"检查 base_url 是否漏了 /api"
+                    )
                 else:
                     try:
                         data = (r.json() or {}).get("data") or []
@@ -645,8 +671,9 @@ class OpcClient:
         return False, last or "unknown"
 
     @classmethod
-    def wait_until_active(cls, api_key: str, *, attempts: int = 3,
-                          delay: float = 2.0, **kw) -> tuple:
+    def wait_until_active(
+        cls, api_key: str, *, attempts: int = 3, delay: float = 2.0, **kw
+    ) -> tuple:
         """新建 key 的校验封装。
 
         ⚠ 早期这里写着"新建 key 有 ~10s 网关传播延迟"，**那个结论是错的** ——
@@ -657,8 +684,9 @@ class OpcClient:
         return cls.verify_key(api_key, attempts=attempts, delay=delay, **kw)
 
     @staticmethod
-    def probe_key(api_key: str, *, model: str = "opc-txt-v1",
-                  base: str = None, timeout: float = None) -> tuple:
+    def probe_key(
+        api_key: str, *, model: str = "opc-txt-v1", base: str = None, timeout: float = None
+    ) -> tuple:
         """用 key 真发一次 `POST /v1/chat/completions`，返回 `(ok, 说明)`。
 
         ⚠ 这会**真的消耗 Token 余额**。默认不跑，只有 `--probe-key` 才跑。
@@ -667,12 +695,14 @@ class OpcClient:
         try:
             r = requests.post(
                 url,
-                headers={"Authorization": f"Bearer {api_key}",
-                         "Content-Type": "application/json"},
-                json={"model": model,
-                      "messages": [{"role": "user", "content": "ping"}],
-                      "max_tokens": 8},
-                timeout=timeout or config.REQUEST_TIMEOUT)
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json={
+                    "model": model,
+                    "messages": [{"role": "user", "content": "ping"}],
+                    "max_tokens": 8,
+                },
+                timeout=timeout or config.REQUEST_TIMEOUT,
+            )
         except requests.RequestException as ex:
             return False, f"network: {type(ex).__name__}"
         if not r.ok:

@@ -80,7 +80,7 @@ class TestBanEvidence:
 
     def test_ban_outside_window_is_ignored(self, monkeypatch):
         quota.record_ban("203.0.113.11", "old")
-        monkeypatch.setenv("FO_IP_QUOTA_WINDOW_H", "0")   # 窗口缩到 ~0h
+        monkeypatch.setenv("FO_IP_QUOTA_WINDOW_H", "0")  # 窗口缩到 ~0h
         assert not quota.status("203.0.113.11").exhausted
 
     def test_old_records_without_kind_count_as_success(self):
@@ -90,9 +90,13 @@ class TestBanEvidence:
         """
         p = quota.state_path()
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps({"ts": int(time.time()), "scope": "203.0.113.11",
-                                 "email": "a@example-mail.test"}) + "\n",
-                     encoding="utf-8")
+        p.write_text(
+            json.dumps(
+                {"ts": int(time.time()), "scope": "203.0.113.11", "email": "a@example-mail.test"}
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         st = quota.status("203.0.113.11")
         assert st.used == 1
         assert not st.banned
@@ -106,8 +110,7 @@ class TestGuard:
 
     def test_allow_partial_returns_status(self):
         quota.record("a", scope="203.0.113.11")
-        st = quota.check_or_raise(planned=3, scope="203.0.113.11",
-                                  allow_partial=True)
+        st = quota.check_or_raise(planned=3, scope="203.0.113.11", allow_partial=True)
         assert st.remaining == 4
 
     def test_hint_reads_ignore_flag(self):

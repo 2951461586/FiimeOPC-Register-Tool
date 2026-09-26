@@ -48,8 +48,10 @@ class TestTokenExtraction:
 
     def test_ignores_placeholders(self, gate):
         """占位值不该被当成"要拦的东西" —— 否则仓库里满屏假命中。"""
-        env = {"FO_SLOT_EGRESS_IPS": "7901=203.0.113.11,7902=127.0.0.1",
-               "FO_WORKER_DOMAIN": "example-mail.test"}
+        env = {
+            "FO_SLOT_EGRESS_IPS": "7901=203.0.113.11,7902=127.0.0.1",
+            "FO_WORKER_DOMAIN": "example-mail.test",
+        }
         assert gate._tokens_from_env(env) == set()
 
     def test_ignores_short_fragments(self, gate):
@@ -85,8 +87,9 @@ class TestNoHardcodedIdentifiers:
         src = GATE.read_text(encoding="utf-8")
         # 匹配非保留段的公网 IPv4（排除 203.0.113.x / 198.51.100.x / 127.x / 0.0.0.0）
         ips = set(re.findall(r"\b\d{1,3}(?:\.\d{1,3}){3}\b", src))
-        bad = {ip for ip in ips
-               if not ip.startswith(("203.0.113.", "198.51.100.", "127.", "0.0.0.0"))}
+        bad = {
+            ip for ip in ips if not ip.startswith(("203.0.113.", "198.51.100.", "127.", "0.0.0.0"))
+        }
         assert not bad, f"闸门脚本里有真实 IP：{sorted(bad)} —— 应该从 .env 读"
 
     def test_gate_source_has_no_worker_subdomain(self, gate):
@@ -130,8 +133,9 @@ class TestScan:
         monkeypatch.setattr(gate, "ROOT", tmp_path)
         monkeypatch.setattr(gate, "SCAN_DIRS", ("src",))
         (tmp_path / "src").mkdir()
-        (tmp_path / "src" / "a.py").write_text("x = 1\ny = 2\nZ = 'secret-host.example'\n",
-                                               encoding="utf-8")
+        (tmp_path / "src" / "a.py").write_text(
+            "x = 1\ny = 2\nZ = 'secret-host.example'\n", encoding="utf-8"
+        )
         hits = gate.scan({"secret-host.example"})
         assert hits[0][1] == 3
         assert "secret-host.example" in hits[0][3]
@@ -187,8 +191,7 @@ class TestExitCodes:
         monkeypatch.setattr(gate, "ROOT", tmp_path)
         monkeypatch.setattr(gate, "SCAN_DIRS", ("src",))
         (tmp_path / "src").mkdir()
-        (tmp_path / "src" / "leak.py").write_text("X='secret-host.example'\n",
-                                                  encoding="utf-8")
+        (tmp_path / "src" / "leak.py").write_text("X='secret-host.example'\n", encoding="utf-8")
         monkeypatch.setattr(sys, "argv", ["check_leaks.py", "--quiet"])
         assert gate.main() == 1
 

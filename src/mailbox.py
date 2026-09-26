@@ -45,11 +45,9 @@ class MailboxSource(Protocol):
     last_polls: int
     last_http_errors: int
 
-    def create_mailbox(self, domain: str = None, count: int = 1) -> list:
-        ...
+    def create_mailbox(self, domain: str = None, count: int = 1) -> list: ...
 
-    def wait_for_mail(self, address: str, **kw) -> Mail | None:
-        ...
+    def wait_for_mail(self, address: str, **kw) -> Mail | None: ...
 
 
 class WorkerMailbox:
@@ -97,4 +95,5 @@ def make_source(kind: str = None) -> MailboxSource:
     raise ValueError(
         f"未知的邮箱源 {k!r}，只认 {' / '.join(config.MAILBOX_KINDS)}"
         f"（加新源请同时改 config.MAILBOX_KINDS 与本工厂 —— "
-        f"两处必须一起改，否则「校验认得的取值」和「工厂认得的取值」会漂移）")
+        f"两处必须一起改，否则「校验认得的取值」和「工厂认得的取值」会漂移）"
+    )

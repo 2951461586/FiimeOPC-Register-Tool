@@ -49,8 +49,8 @@ class TestMergeRecords:
         old = [{"email": "a", "status": "success", "api_key": "k", "egress": "1.1.1.1"}]
         new = [{"email": "a", "status": "success", "stages": {"verify": "ok"}}]
         merged, _, _, up = ledger.merge_records(old, new)
-        assert merged[0]["api_key"] == "k"          # 旧字段没丢
-        assert merged[0]["egress"] == "1.1.1.1"     # 旧字段没丢
+        assert merged[0]["api_key"] == "k"  # 旧字段没丢
+        assert merged[0]["egress"] == "1.1.1.1"  # 旧字段没丢
         assert merged[0]["stages"] == {"verify": "ok"}  # 新字段进来了
         assert up == 1
 
@@ -128,8 +128,7 @@ class TestLayout:
         monkeypatch.setattr(ledger, "LEDGER_DIR", tmp_path / "ledger")
         assert ledger.ledger_path().name != ledger.LAST_RUN_NAME
 
-    def test_ledger_path_returns_nonexistent_placeholder_when_empty(self, tmp_path,
-                                                                   monkeypatch):
+    def test_ledger_path_returns_nonexistent_placeholder_when_empty(self, tmp_path, monkeypatch):
         """空台账目录不该让工具起不来 —— 返回一个**永不存在的占位路径**，
         让 `load_existing()` 按契约返回 `[]`。"""
         monkeypatch.setattr(ledger, "LEDGER_DIR", tmp_path / "ledger")
@@ -140,7 +139,7 @@ class TestLayout:
     def test_snapshot_path_shape(self):
         p = ledger.snapshot_path(when=0)
         assert ledger.SNAPSHOT_RE.match(p.name), p.name
-        assert p.parent.name.count("-") == 2       # YYYY-MM-DD
+        assert p.parent.name.count("-") == 2  # YYYY-MM-DD
 
     def test_snapshot_paths_ignores_irregular_names(self, tmp_path, monkeypatch):
         """🔴 用正则筛，不用 `glob("*.json")`。
@@ -266,20 +265,24 @@ class TestApplyVerdicts:
     """
 
     def test_updates_only_verify_fields(self):
-        rec = {"email": "a@example-mail.test", "api_key": "opc_sk_x",
-               "status": "success", "key_verified": None,
-               "egress": "203.0.113.11",
-               "stages": {"register": "ok", "verify": "陈旧文案"}}
+        rec = {
+            "email": "a@example-mail.test",
+            "api_key": "opc_sk_x",
+            "status": "success",
+            "key_verified": None,
+            "egress": "203.0.113.11",
+            "stages": {"register": "ok", "verify": "陈旧文案"},
+        }
         out, changed = ledger.apply_verdicts(
-            [rec], {"opc_sk_x": (True, "ok(3 models)")},
-            stamp="2026-09-27 10:00:00")
+            [rec], {"opc_sk_x": (True, "ok(3 models)")}, stamp="2026-09-27 10:00:00"
+        )
         assert changed == 1
         r = out[0]
         assert r["key_verified"]
         assert r["stages"]["verify"] == "ok(3 models)"
         assert r["stages"]["verify_refreshed_at"] == "2026-09-27 10:00:00"
-        assert r["stages"]["register"] == "ok"      # 旧字段没丢
-        assert r["egress"] == "203.0.113.11"          # 其它字段没动
+        assert r["stages"]["register"] == "ok"  # 旧字段没丢
+        assert r["egress"] == "203.0.113.11"  # 其它字段没动
 
     def test_does_not_mutate_input_records(self):
         """返回**新列表**：原列表可能同时是别的合并基准。"""
@@ -302,10 +305,8 @@ class TestApplyVerdicts:
 
     def test_false_verdict_overwrites_stale_success(self):
         """复验的目的就是**覆盖**旧结论 —— 不能因为旧值是 true 就手下留情。"""
-        rec = {"api_key": "opc_sk_x", "key_verified": True,
-               "stages": {"verify": "ok(old)"}}
-        out, _ = ledger.apply_verdicts(
-            [rec], {"opc_sk_x": (False, "401（key 无效）")})
+        rec = {"api_key": "opc_sk_x", "key_verified": True, "stages": {"verify": "ok(old)"}}
+        out, _ = ledger.apply_verdicts([rec], {"opc_sk_x": (False, "401（key 无效）")})
         assert not out[0]["key_verified"]
         assert out[0]["stages"]["verify"] == "401（key 无效）"
 

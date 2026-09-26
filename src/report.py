@@ -39,8 +39,9 @@ def latency_summary(totals) -> str:
             continue
     if not xs:
         return ""
-    return (f"{statistics.mean(xs):.1f} / {statistics.median(xs):.1f} / "
-            f"{min(xs):.1f} / {max(xs):.1f}")
+    return (
+        f"{statistics.mean(xs):.1f} / {statistics.median(xs):.1f} / {min(xs):.1f} / {max(xs):.1f}"
+    )
 
 
 def fmt_ms(v) -> str:
@@ -54,11 +55,13 @@ def fmt_ms(v) -> str:
 
 def _mask(key: str) -> str:
     from .redact import mask_key
+
     return mask_key(key)
 
 
-def render_batch_report(results, written, wall, *, workers, config, quota,
-                        error_kind_of, err_ip_quota, err_quota_guard) -> None:
+def render_batch_report(
+    results, written, wall, *, workers, config, quota, error_kind_of, err_ip_quota, err_quota_guard
+) -> None:
     """渲染一批结果的收尾报告（直接 `print` 到 stdout）。
 
     `results`  —— `AccountRecord` 列表（成功/跳过/失败都在里面）
@@ -101,16 +104,20 @@ def render_batch_report(results, written, wall, *, workers, config, quota,
         else:
             total_s = "-"
         egress = (r.egress or "-")[:15]
-        print(f"  {(r.email or '(未建邮箱)'):44s} {egress:>15s} "
-              f"{fmt_ms(tm.get('register')):>7s} "
-              f"{fmt_ms(tm.get('login')):>7s} "
-              f"{fmt_ms(tm.get('key')):>7s} {total_s:>7s}")
+        print(
+            f"  {(r.email or '(未建邮箱)'):44s} {egress:>15s} "
+            f"{fmt_ms(tm.get('register')):>7s} "
+            f"{fmt_ms(tm.get('login')):>7s} "
+            f"{fmt_ms(tm.get('key')):>7s} {total_s:>7s}"
+        )
     if totals:
         hdr = f"── 统计（{len(totals)} 个完整样本）"
         print(f"  {hdr:44s} {'':>15s}")
         # 🔴 四个标签与四个取值**必须在同一个 print 里**（见 `latency_summary`）。
-        print(f"  {'   ' + LATENCY_LABELS:44s} {'':>15s} "
-              f"{'':>7s} {'':>7s} {'':>7s} {latency_summary(totals)}")
+        print(
+            f"  {'   ' + LATENCY_LABELS:44s} {'':>15s} "
+            f"{'':>7s} {'':>7s} {'':>7s} {latency_summary(totals)}"
+        )
 
     # ── 注册内部阶段（取**最慢**的账号）────────────────────────
     # 🔴 看最慢的那个，不是第一个 —— 批量吞吐由关键路径（最慢账号）决定，
@@ -120,12 +127,15 @@ def render_batch_report(results, written, wall, *, workers, config, quota,
         sub = (r.timings or {}).get("register_detail")
         if not sub:
             continue
-        if slow_reg is None or (r.timings or {}).get("register", 0) > \
-                (slow_reg.timings or {}).get("register", 0):
+        if slow_reg is None or (r.timings or {}).get("register", 0) > (slow_reg.timings or {}).get(
+            "register", 0
+        ):
             slow_reg = r
     if slow_reg is not None:
-        print(f"\n注册内部阶段（最慢账号 {slow_reg.email or '(未建邮箱)'}，"
-              f"注册 {fmt_ms(slow_reg.timings.get('register'))}s）：")
+        print(
+            f"\n注册内部阶段（最慢账号 {slow_reg.email or '(未建邮箱)'}，"
+            f"注册 {fmt_ms(slow_reg.timings.get('register'))}s）："
+        )
         d = slow_reg.timings["register_detail"]
         # 🔴 这些键是**计数/文本**，不是毫秒 —— 混进去会打印成 "0.00s"，
         #    看着像个耗时。
@@ -143,36 +153,44 @@ def render_batch_report(results, written, wall, *, workers, config, quota,
             print(f"  {'邮件主题':14s} {d['mail_subject']}")
 
     # ── 注册耗时分布 ──────────────────────────────────────────
-    regs = sorted(r.timings.get("register", 0) / 1000
-                  for r in results if r.timings.get("register"))
+    regs = sorted(r.timings.get("register", 0) / 1000 for r in results if r.timings.get("register"))
     if len(regs) >= 2:
         print(f"\n注册耗时分布（{len(regs)} 个账号）：")
-        print(f"  最快 {regs[0]:.1f}s · 中位 {regs[len(regs) // 2]:.1f}s "
-              f"· 最慢 {regs[-1]:.1f}s · 极差 {regs[-1] - regs[0]:.1f}s")
+        print(
+            f"  最快 {regs[0]:.1f}s · 中位 {regs[len(regs) // 2]:.1f}s "
+            f"· 最慢 {regs[-1]:.1f}s · 极差 {regs[-1] - regs[0]:.1f}s"
+        )
         if regs[-1] > regs[0] * 1.5:
-            print("  ⚠ 极差超过最快值的 1.5 倍 —— 总时长多半由这个离群值决定，"
-                  "不是均值")
+            print("  ⚠ 极差超过最快值的 1.5 倍 —— 总时长多半由这个离群值决定，不是均值")
 
     # ── 吞吐 ──────────────────────────────────────────────────
     if results:
         tm0 = results[0].timings or {}
         kd, bt = tm0.get("keys_done"), tm0.get("batch_total")
         n_egress = len({r.egress for r in results if r.egress}) or 1
-        print(f"\n吞吐（{len(results)} 个账号，登录并发 workers={workers}，"
-              f"用到的出口 {n_egress} 个）：")
+        print(
+            f"\n吞吐（{len(results)} 个账号，登录并发 workers={workers}，"
+            f"用到的出口 {n_egress} 个）："
+        )
         if kd and bt:
-            print(f"  关键路径（全部 key 建出）: {kd / 1000:6.1f}s "
-                  f"= {kd / 1000 / len(results):5.1f}s / 账号")
-            print(f"  含末尾统一校验          : {bt / 1000:6.1f}s "
-                  f"= {bt / 1000 / len(results):5.1f}s / 账号")
+            print(
+                f"  关键路径（全部 key 建出）: {kd / 1000:6.1f}s "
+                f"= {kd / 1000 / len(results):5.1f}s / 账号"
+            )
+            print(
+                f"  含末尾统一校验          : {bt / 1000:6.1f}s "
+                f"= {bt / 1000 / len(results):5.1f}s / 账号"
+            )
         else:
             print(f"  总耗时 {wall:6.1f}s = {wall / len(results):5.1f}s / 账号")
         # 🔴 这里的"理论上限"由**注册闸门**决定，不是登录并发：
         #    每出口每 REG_MIN_INTERVAL 秒只能注册 1 个。
-        print(f"  ⚠ 本链的硬瓶颈是**注册闸门**：每出口 {config.REG_MIN_INTERVAL:g}s 1 个。"
-              f"\n     {n_egress} 个出口 → 理论上限 "
-              f"{n_egress * 3600 / config.REG_MIN_INTERVAL:.0f} 个/小时。"
-              f"调大 workers 不会突破它。")
+        print(
+            f"  ⚠ 本链的硬瓶颈是**注册闸门**：每出口 {config.REG_MIN_INTERVAL:g}s 1 个。"
+            f"\n     {n_egress} 个出口 → 理论上限 "
+            f"{n_egress * 3600 / config.REG_MIN_INTERVAL:.0f} 个/小时。"
+            f"调大 workers 不会突破它。"
+        )
 
     # ── 结果清单 ──────────────────────────────────────────────
     if ok:
@@ -191,16 +209,17 @@ def render_batch_report(results, written, wall, *, workers, config, quota,
         #    用真值判断而不是 `is True`/`is False`（对 `bool` 字面量做 `is`
         #    比较会被判成「与字面量做身份比较」）。
         verified = [r for r in ok if r.key_verified]
-        broken = [r for r in ok
-                  if r.key_verified is not None and not r.key_verified]
+        broken = [r for r in ok if r.key_verified is not None and not r.key_verified]
         untested = [r for r in ok if r.key_verified is None]
         print(f"\n交付完整性（可调用性）：{len(verified)}/{len(ok)} 个 key 校验通过")
         if broken:
             print(f"  ✗ {len(broken)} 个**建出来了但校验不过** —— 这些不算交付：")
             for r in broken:
                 print(f"      {r.email:40s} {(r.stages or {}).get('verify', '')[:70]}")
-            print("    先看说明里的字节数：6707B 左右 = 打到了 SPA 兜底页，"
-                  "多半是 base_url 漏了 /api。")
+            print(
+                "    先看说明里的字节数：6707B 左右 = 打到了 SPA 兜底页，"
+                "多半是 base_url 漏了 /api。"
+            )
         if untested:
             # 🔴 `key_verified is None` **不等于**“用户主动 --no-verify”。
             #    它可能是：① 用户显式 `--no-verify`；② 旧版本代码写进台账、
@@ -230,18 +249,21 @@ def render_batch_report(results, written, wall, *, workers, config, quota,
         codes = sorted({r.invite_code for r in sent})
 
         print(f"\n邀请码（推荐关系）：{len(confirmed)}/{len(judged)} 个已确认受邀")
-        print(f"  本次使用：{'、'.join(codes)}"
-              f"（{len(sent)} 个账号发出了码"
-              f"，{len(sent) - len(judged)} 个未走完注册+激活、无法判断）")
+        print(
+            f"  本次使用：{'、'.join(codes)}"
+            f"（{len(sent)} 个账号发出了码"
+            f"，{len(sent) - len(judged)} 个未走完注册+激活、无法判断）"
+        )
         if not judged:
             print("  ℹ 没有一个账号走到能判断的那一步 —— 见下面「失败」一节。")
         elif missed:
-            print(f"  ⚠ {len(missed)} 个**已发码但服务端未记录受邀**"
-                  f"（`invitedAt` = 0）—— 推荐关系未成立：")
+            print(
+                f"  ⚠ {len(missed)} 个**已发码但服务端未记录受邀**"
+                f"（`invitedAt` = 0）—— 推荐关系未成立："
+            )
             for r in missed:
                 print(f"      {(r.email or '(未建邮箱)'):40s}")
-            print("    服务端**不校验码是否存在**，所以这类问题**不会**以注册失败"
-                  "的形式暴露。")
+            print("    服务端**不校验码是否存在**，所以这类问题**不会**以注册失败的形式暴露。")
             print("    常见原因：码拼错 / 码已失效 / 用自己的码给自己注册。")
         else:
             print("  ✓ 发出的码全部生效。")
@@ -257,8 +279,7 @@ def render_batch_report(results, written, wall, *, workers, config, quota,
         quota_hits = [r for r in bad if error_kind_of(r) == err_ip_quota]
         if quota_hits:
             eg = sorted({r.egress for r in quota_hits if r.egress})
-            print(f"\n  ⚠ 其中 {len(quota_hits)} 个是**出口被判死**"
-                  f"（该 IP 今日注册数量已达上限）")
+            print(f"\n  ⚠ 其中 {len(quota_hits)} 个是**出口被判死**（该 IP 今日注册数量已达上限）")
             if eg:
                 print(f"    涉及出口：{', '.join(eg)}")
             print("    这是 **IP 维度**的每日配额，不是瞬时速率 ——")
@@ -267,10 +288,13 @@ def render_batch_report(results, written, wall, *, workers, config, quota,
             print("      · 换邮箱域名、换用户名、换 UA 都无效（已实测）。")
         guard_hits = [r for r in bad if error_kind_of(r) == err_quota_guard]
         if guard_hits:
-            print(f"\n  ℹ 另有 {len(guard_hits)} 个是**本地守卫主动中止**"
-                  f"（一个请求都没发）—— 这不是服务端拒绝，")
-            print("    说明本地计数比服务端更保守。要放行：调大 FO_IP_QUOTA_MAX "
-                  "或加 --ignore-quota。")
+            print(
+                f"\n  ℹ 另有 {len(guard_hits)} 个是**本地守卫主动中止**"
+                f"（一个请求都没发）—— 这不是服务端拒绝，"
+            )
+            print(
+                "    说明本地计数比服务端更保守。要放行：调大 FO_IP_QUOTA_MAX 或加 --ignore-quota。"
+            )
 
     # ── 调用方式 ──────────────────────────────────────────────
     if ok:
@@ -288,8 +312,10 @@ def render_batch_report(results, written, wall, *, workers, config, quota,
         #   分开说清楚：能调几个模型 / 每个账号能建几把 key。
         n_models = len(ok[0].models or [])
         tail = "（含 text/image/video 三类）" if n_models else ""
-        print(f"  ⚠ 该 key 可调 {n_models} 个模型{tail}；"
-              f"每账号最多 {config.MAX_KEYS_PER_USER} 把 key。")
+        print(
+            f"  ⚠ 该 key 可调 {n_models} 个模型{tail}；"
+            f"每账号最多 {config.MAX_KEYS_PER_USER} 把 key。"
+        )
         print("    key 明文只在台账与本行出现，别把这段贴出去。")
 
     # ── 收尾再报一次配额 ──────────────────────────────────────
@@ -302,6 +328,8 @@ def render_batch_report(results, written, wall, *, workers, config, quota,
                 print(f"  {s:16s} {st.describe()}")
         else:
             print(f"\n本地配额：{quota.status().describe()}")
-    print(f"\n本地配额合计：{quota.status().describe()}"
-          f"（本次成功 {len(ok)} 个，跳过 {len(skipped)} 个）")
+    print(
+        f"\n本地配额合计：{quota.status().describe()}"
+        f"（本次成功 {len(ok)} 个，跳过 {len(skipped)} 个）"
+    )
     print("=" * 78)

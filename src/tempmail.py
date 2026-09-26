@@ -85,11 +85,13 @@ class TempMailClient:
         #    确实要让邮箱也走代理时：`FO_PROXY_MAIL=1`。
         if os.getenv("FO_PROXY_MAIL", "").strip().lower() in ("1", "true", "yes"):
             config.apply_proxy(self.session)
-        self.session.headers.update({
-            "X-Admin-Token": self.token,
-            "Authorization": f"Bearer {self.token}",
-            "Accept": "application/json",
-        })
+        self.session.headers.update(
+            {
+                "X-Admin-Token": self.token,
+                "Authorization": f"Bearer {self.token}",
+                "Accept": "application/json",
+            }
+        )
         # 上一次 `wait_for_mail` 失败的原因（"" = 没有异常，纯粹是邮件没到）。
         # 用来把"邮件没到"和"邮箱服务读不出来"分开 —— 两者的修法完全不同。
         self.last_error = ""
@@ -102,7 +104,8 @@ class TempMailClient:
         r = self.session.post(
             f"{self.base}/api/mailboxes",
             json={"domain": domain or config.WORKER_DOMAIN, "count": count},
-            timeout=self.timeout)
+            timeout=self.timeout,
+        )
         r.raise_for_status()
         data = r.json()
         if not data.get("ok"):
@@ -118,11 +121,13 @@ class TempMailClient:
         **只该在排查时用**，生产路径必须带 email。
         """
         if email:
-            r = self.session.get(f"{self.base}/api/inbox",
-                                 params={"email": email}, timeout=self.timeout)
+            r = self.session.get(
+                f"{self.base}/api/inbox", params={"email": email}, timeout=self.timeout
+            )
         else:
-            r = self.session.get(f"{self.base}/admin/all",
-                                 params={"limit": limit or 50}, timeout=self.timeout)
+            r = self.session.get(
+                f"{self.base}/admin/all", params={"limit": limit or 50}, timeout=self.timeout
+            )
         r.raise_for_status()
         raw = r.json().get("messages", []) or []
         return [
@@ -138,9 +143,15 @@ class TempMailClient:
             for m in raw
         ]
 
-    def wait_for_mail(self, address: str, *, sender_hint: str = None,
-                      timeout: float = None, interval: float = None,
-                      since_ts: int = 0) -> Mail | None:
+    def wait_for_mail(
+        self,
+        address: str,
+        *,
+        sender_hint: str = None,
+        timeout: float = None,
+        interval: float = None,
+        since_ts: int = 0,
+    ) -> Mail | None:
         """轮询等待目标地址的邮件。
 
         🔴 **5xx 必须重试，绝不能判死**（参考项目实测：同一个 Worker 的
@@ -155,8 +166,7 @@ class TempMailClient:
         """
         timeout = timeout or config.MAIL_POLL_TIMEOUT
         interval = interval or config.MAIL_POLL_INTERVAL
-        hint = (sender_hint if sender_hint is not None
-                else config.MAIL_SENDER_HINT).lower()
+        hint = (sender_hint if sender_hint is not None else config.MAIL_SENDER_HINT).lower()
         deadline = time.time() + timeout
         target = address.lower()
         self.last_error = ""
@@ -197,6 +207,8 @@ class TempMailClient:
             time.sleep(interval)
 
         if errs and fallback is None:
-            self.last_error = (f"邮箱 Worker 持续 5xx（{errs} 次，最近 HTTP "
-                               f"{last_code}）—— 不是邮件没到，是读不出来")
+            self.last_error = (
+                f"邮箱 Worker 持续 5xx（{errs} 次，最近 HTTP "
+                f"{last_code}）—— 不是邮件没到，是读不出来"
+            )
         return fallback

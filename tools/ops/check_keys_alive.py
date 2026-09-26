@@ -93,16 +93,18 @@ def _write_back(args, verdicts: dict) -> int | None:
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="复验台账里的 API Key（只读，不消耗注册配额）",
-        formatter_class=argparse.RawDescriptionHelpFormatter)
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     ap.add_argument("--ledger", help="指定台账文件（默认：台账读源 = 最新全量快照）")
-    ap.add_argument("--all", action="store_true",
-                    help="复验**全部**历史快照（按 api_key 去重）")
+    ap.add_argument("--all", action="store_true", help="复验**全部**历史快照（按 api_key 去重）")
     ap.add_argument("--json", dest="json_out", help="额外落一份机器可读结果到该路径")
     ap.add_argument("--workers", type=int, default=8, help="并发数（默认 8）")
     ap.add_argument("--attempts", type=int, default=2, help="每个 key 的尝试次数")
-    ap.add_argument("--apply", action="store_true",
-                    help="把复验结论**写回台账**（默认只读；只改 "
-                         "key_verified / stages.verify，不动其它字段）")
+    ap.add_argument(
+        "--apply",
+        action="store_true",
+        help="把复验结论**写回台账**（默认只读；只改 key_verified / stages.verify，不动其它字段）",
+    )
     args = ap.parse_args()
 
     # ⚠ 刻意**不**调 `config.validate()` 拦人：复验只需要 `SITE_BASE`，
@@ -113,8 +115,7 @@ def main() -> int:
         print("台账里没有带 api_key 的记录 —— 没什么可复验的。")
         return _cli.EXIT_OK
 
-    print(f"复验 {len(recs)} 把 key（并发 {args.workers}，"
-          f"每个尝试 {args.attempts} 次）…\n")
+    print(f"复验 {len(recs)} 把 key（并发 {args.workers}，每个尝试 {args.attempts} 次）…\n")
 
     def one(r: dict) -> tuple:
         key = r["api_key"]
@@ -122,8 +123,7 @@ def main() -> int:
         #    而不是 `None`：`verify_key` 内部就是 `base or 默认值`，空串等价，
         #    但省得它的 `base: str` 形参被传 `None`（类型上说不通）。
         base = str(r.get("base_url") or "")
-        ok, why = opc.OpcClient.verify_key(key, base=base,
-                                           attempts=args.attempts, delay=2.0)
+        ok, why = opc.OpcClient.verify_key(key, base=base, attempts=args.attempts, delay=2.0)
         return r, bool(ok), why
 
     alive, dead = [], []
@@ -138,8 +138,10 @@ def main() -> int:
         print(f"  ✓ {(r.get('email') or '(无邮箱)'):44s} {why}")
     for r, why in sorted(dead, key=lambda t: t[0].get("email") or ""):
         print(f"  ✗ {(r.get('email') or '(无邮箱)'):44s} {why}")
-        print(f"      key: {opc.mask_key(r['api_key'])}  "
-              f"base: {r.get('base_url') or '(未记录，用配置默认)'}")
+        print(
+            f"      key: {opc.mask_key(r['api_key'])}  "
+            f"base: {r.get('base_url') or '(未记录，用配置默认)'}"
+        )
 
     # 🔴 必须带**分母** —— 只报「5 把存活」看不出还有几把没查。
     print(f"\n存活 {len(alive)}/{len(recs)}")
@@ -152,14 +154,24 @@ def main() -> int:
             "checked": len(recs),
             "alive": len(alive),
             "dead": len(dead),
-            "results": [{"email": r.get("email"), "ok": True, "why": w,
-                         "base_url": r.get("base_url") or ""} for r, w in alive]
-            + [{"email": r.get("email"), "ok": False, "why": w,
-                "base_url": r.get("base_url") or "",
-                "key_masked": opc.mask_key(r["api_key"])} for r, w in dead],
+            "results": [
+                {"email": r.get("email"), "ok": True, "why": w, "base_url": r.get("base_url") or ""}
+                for r, w in alive
+            ]
+            + [
+                {
+                    "email": r.get("email"),
+                    "ok": False,
+                    "why": w,
+                    "base_url": r.get("base_url") or "",
+                    "key_masked": opc.mask_key(r["api_key"]),
+                }
+                for r, w in dead
+            ],
         }
         Path(args.json_out).write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
         print(f"  （机器可读结果 → {args.json_out}）")
 
     if args.apply:

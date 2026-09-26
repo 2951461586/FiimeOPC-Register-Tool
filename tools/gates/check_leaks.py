@@ -46,24 +46,53 @@ force_utf8_stdio()
 
 # 这些变量里的**值**是要保护的标识。
 SENSITIVE_VARS = (
-    "FO_SLOT_EGRESS_IPS", "FO_WORKER_BASE", "FO_WORKER_ADMIN_TOKEN",
-    "FO_WORKER_DOMAIN", "FO_PROXY", "FO_PROXY_SLOTS",
+    "FO_SLOT_EGRESS_IPS",
+    "FO_WORKER_BASE",
+    "FO_WORKER_ADMIN_TOKEN",
+    "FO_WORKER_DOMAIN",
+    "FO_PROXY",
+    "FO_PROXY_SLOTS",
 )
 
 # 扫描范围：会被提交的东西。刻意**白名单式**列出，不写"排除法" ——
 # 排除法漏掉一个新目录就静默失效，而白名单漏了只会少扫（还能发现）。
 SCAN_GLOBS = (
-    "*.py", "*.md", "*.toml", "*.cfg", "*.ini", "*.yml", "*.yaml",
-    "*.json", "*.txt", "*.example", "*.bat", "*.ps1", "*.sh",
+    "*.py",
+    "*.md",
+    "*.toml",
+    "*.cfg",
+    "*.ini",
+    "*.yml",
+    "*.yaml",
+    "*.json",
+    "*.txt",
+    "*.example",
+    "*.bat",
+    "*.ps1",
+    "*.sh",
 )
 SCAN_DIRS = ("src", "tests", "tools", "docs", ".github")
-SKIP_DIR_NAMES = {".git", ".workbuddy-ai", "ledger", "__pycache__",
-                  ".pytest_cache", ".ruff_cache", ".venv", "venv"}
+SKIP_DIR_NAMES = {
+    ".git",
+    ".workbuddy-ai",
+    "ledger",
+    "__pycache__",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".venv",
+    "venv",
+}
 
 # 占位化之后**允许**出现的值。命中这些不算泄漏。
 ALLOWED_VALUES = {
-    "203.0.113.11", "203.0.113.12", "203.0.113.13", "203.0.113.14",
-    "example-mail.test", "example.com", "127.0.0.1", "0.0.0.0",
+    "203.0.113.11",
+    "203.0.113.12",
+    "203.0.113.13",
+    "203.0.113.14",
+    "example-mail.test",
+    "example.com",
+    "127.0.0.1",
+    "0.0.0.0",
 }
 
 
@@ -157,7 +186,7 @@ def selftest() -> int:
     """
     import tempfile
 
-    planted = "198.51.100.77"          # RFC 5737 保留段，真实环境不会用到
+    planted = "198.51.100.77"  # RFC 5737 保留段，真实环境不会用到
     with tempfile.TemporaryDirectory() as td:
         f = Path(td) / "planted.py"
         f.write_text(f'BASE = "https://{planted}/x"\n', encoding="utf-8")
@@ -175,12 +204,15 @@ def selftest() -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="泄漏闸门：.env 里的基础设施标识不允许出现在提交物里",
-        formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--selftest", action="store_true",
-                    help="变异测试：证明闸门真的会拦")
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    ap.add_argument("--selftest", action="store_true", help="变异测试：证明闸门真的会拦")
     ap.add_argument("--quiet", action="store_true", help="只在命中时输出")
-    ap.add_argument("--show-tokens", action="store_true",
-                    help="打印拦哪些片段（⚠ 会输出真实标识，别在共享终端用）")
+    ap.add_argument(
+        "--show-tokens",
+        action="store_true",
+        help="打印拦哪些片段（⚠ 会输出真实标识，别在共享终端用）",
+    )
     args = ap.parse_args()
 
     if args.selftest:
@@ -188,14 +220,20 @@ def main() -> int:
 
     env = _read_env()
     if not env:
-        print(f"✗ 读不到 {ENV_FILE} —— 闸门无法确定要拦什么。\n"
-              f"  这**不是**「仓库干净」，是「闸门没在工作」。", file=sys.stderr)
+        print(
+            f"✗ 读不到 {ENV_FILE} —— 闸门无法确定要拦什么。\n"
+            f"  这**不是**「仓库干净」，是「闸门没在工作」。",
+            file=sys.stderr,
+        )
         return 2
 
     tokens = _tokens_from_env(env)
     if not tokens:
-        print(f"✗ {ENV_FILE} 里没有任何敏感变量（{', '.join(SENSITIVE_VARS)}）"
-              f" —— 闸门空转，不能据此判定干净。", file=sys.stderr)
+        print(
+            f"✗ {ENV_FILE} 里没有任何敏感变量（{', '.join(SENSITIVE_VARS)}）"
+            f" —— 闸门空转，不能据此判定干净。",
+            file=sys.stderr,
+        )
         return 2
 
     if args.show_tokens:
@@ -206,13 +244,15 @@ def main() -> int:
         print(f"✗ 命中 {len(hits)} 处泄漏：\n", file=sys.stderr)
         for p, i, t, line in hits:
             print(f"  {p.relative_to(ROOT)}:{i}  ← {t}\n      {line}", file=sys.stderr)
-        print("\n修法：按家族占位化（出口 IP → 203.0.113.x，域名 → example-mail.test），"
-              "见 README「公开前的占位化」。", file=sys.stderr)
+        print(
+            "\n修法：按家族占位化（出口 IP → 203.0.113.x，域名 → example-mail.test），"
+            "见 README「公开前的占位化」。",
+            file=sys.stderr,
+        )
         return 1
 
     if not args.quiet:
-        print(f"✓ 干净：扫了 {len(_iter_files())} 个文件，"
-              f"{len(tokens)} 个标识片段一个都没出现。")
+        print(f"✓ 干净：扫了 {len(_iter_files())} 个文件，{len(tokens)} 个标识片段一个都没出现。")
     return 0
 
 

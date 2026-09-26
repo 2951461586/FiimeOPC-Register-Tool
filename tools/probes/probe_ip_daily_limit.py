@@ -26,8 +26,9 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--slot", default="7902", help="槽位端口（默认 7902，避开其它测试）")
     ap.add_argument("--max", type=int, default=12, help="最多尝试几次")
-    ap.add_argument("--gap", type=float, default=None,
-                    help="两次之间间隔秒数（默认取 config.REG_MIN_INTERVAL）")
+    ap.add_argument(
+        "--gap", type=float, default=None, help="两次之间间隔秒数（默认取 config.REG_MIN_INTERVAL）"
+    )
     args = ap.parse_args()
 
     proxy = f"http://127.0.0.1:{args.slot}"
@@ -39,8 +40,7 @@ def main() -> int:
     except ValueError as ex:
         scope = ""
         print(f"⚠ 该槽位出口 IP 未登记，本次消耗不会计入出口配额：{ex}", flush=True)
-    print(f"槽位 {proxy}（出口 {scope or '未登记'}），"
-          f"间隔 {gap}s，最多 {args.max} 次", flush=True)
+    print(f"槽位 {proxy}（出口 {scope or '未登记'}），间隔 {gap}s，最多 {args.max} 次", flush=True)
 
     ok = 0
     for i in range(1, args.max + 1):
@@ -59,8 +59,10 @@ def main() -> int:
             quota.record(email, scope=scope)
             print(f"[{i:2}] {stamp} ✓ 成功  {u}  (累计 {ok})", flush=True)
         else:
-            print(f"[{i:2}] {stamp} ✗ HTTP {r.http_status} kind={r.limit_kind!r} "
-                  f"err={r.error!r}", flush=True)
+            print(
+                f"[{i:2}] {stamp} ✗ HTTP {r.http_status} kind={r.limit_kind!r} err={r.error!r}",
+                flush=True,
+            )
             if r.limit_kind == opc.LIMIT_IP_QUOTA:
                 # 服务端**确认**判死 —— 落成硬证据，别只留在本次输出里。
                 quota.record_ban(scope, r.error)

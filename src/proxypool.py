@@ -76,8 +76,15 @@ from urllib.parse import urlparse
 from . import config, fsutil
 from .redact import redact_url
 
-__all__ = ["SlotLease", "NoEligibleSlot", "AllSlotsDead", "ProxySlotPool",
-           "build_pool", "check_slots_alive", "state_path"]
+__all__ = [
+    "SlotLease",
+    "NoEligibleSlot",
+    "AllSlotsDead",
+    "ProxySlotPool",
+    "build_pool",
+    "check_slots_alive",
+    "state_path",
+]
 
 
 def state_path() -> Path:
@@ -108,9 +115,10 @@ def _state_key(url: str) -> str:
 @dataclass
 class SlotLease:
     """一个槽位的租约。`url` 是给 `requests` 用的代理串。"""
+
     slot: int
     url: str
-    egress: str = ""       # 出口 IP（拿不到时为空串）
+    egress: str = ""  # 出口 IP（拿不到时为空串）
 
     def __str__(self) -> str:
         # 🔴 走 `redact_url` —— `url` 可能带账密，原样打印会写进日志。
@@ -166,15 +174,21 @@ def check_slots_alive(slots: list, *, timeout: float = 0.5) -> dict:
 class ProxySlotPool:
     """槽位池。线程安全。"""
 
-    def __init__(self, slots: list, *, cooldown: float = None,
-                 cooldown_max: float = None, egress_ips: dict = None,
-                 log=print, state_file=None):
+    def __init__(
+        self,
+        slots: list,
+        *,
+        cooldown: float = None,
+        cooldown_max: float = None,
+        egress_ips: dict = None,
+        log=print,
+        state_file=None,
+    ):
         if not slots:
             raise ValueError("槽位清单为空")
         self.slots = list(slots)
         self.cooldown = cooldown if cooldown is not None else config.PROXY_COOLDOWN
-        self.cooldown_max = (cooldown_max if cooldown_max is not None
-                             else config.PROXY_COOLDOWN_MAX)
+        self.cooldown_max = cooldown_max if cooldown_max is not None else config.PROXY_COOLDOWN_MAX
         self.log = log
         self.state_file = Path(state_file) if state_file else state_path()
 
@@ -188,10 +202,10 @@ class ProxySlotPool:
 
         self._lock = threading.Lock()
         self._cond = threading.Condition(self._lock)
-        self._busy: dict = {}            # slot -> True（在外租约）
-        self._use: dict = {}             # slot -> 累计租用次数（均衡用，规则 3）
+        self._busy: dict = {}  # slot -> True（在外租约）
+        self._use: dict = {}  # slot -> 累计租用次数（均衡用，规则 3）
         self._cooldown_until: dict = {}  # slot -> epoch
-        self._bans: dict = {}            # slot -> 累计封禁次数（退避用）
+        self._bans: dict = {}  # slot -> 累计封禁次数（退避用）
         self._load_state()
 
     # ── 只读视图 ──────────────────────────────────────────────
@@ -240,8 +254,10 @@ class ProxySlotPool:
             if n:
                 self._bans[i] = n
         if self._cooldown_until:
-            self._warn(f"[pool] 读回 {len(self._cooldown_until)} 个仍在冷却的槽位"
-                       f"（状态文件 {self.state_file}）")
+            self._warn(
+                f"[pool] 读回 {len(self._cooldown_until)} 个仍在冷却的槽位"
+                f"（状态文件 {self.state_file}）"
+            )
 
     def _save_state_locked(self) -> None:
         """写状态文件。**失败只告警**，不让整批任务挂掉。
@@ -257,7 +273,8 @@ class ProxySlotPool:
             }
         try:
             fsutil.atomic_write_text(
-                self.state_file, json.dumps(payload, ensure_ascii=False, indent=2))
+                self.state_file, json.dumps(payload, ensure_ascii=False, indent=2)
+            )
         except OSError as ex:
             self._warn(f"[pool] ⚠ 状态文件写失败（不影响本批）：{ex}")
 
@@ -288,7 +305,7 @@ class ProxySlotPool:
                 continue
             ip = self.egress.get(i, "")
             if ip and ip in busy_ips:
-                continue                      # 规则 4
+                continue  # 规则 4
             if accept is not None and not accept(i):
                 continue
             use = self._use.get(i, 0)
@@ -296,8 +313,7 @@ class ProxySlotPool:
                 best, best_use = i, use
         return best
 
-    def acquire(self, *, timeout: float = None, accept=None,
-                exclude: set = None) -> SlotLease:
+    def acquire(self, *, timeout: float = None, accept=None, exclude: set = None) -> SlotLease:
         """拿一个槽位租约。
 
         `accept(slot) -> bool`：额外过滤（pipeline 用它筛掉"该出口配额已满"）。
@@ -316,8 +332,9 @@ class ProxySlotPool:
                 if slot is not None:
                     self._busy[slot] = True
                     self._use[slot] = self._use.get(slot, 0) + 1
-                    return SlotLease(slot=slot, url=self.slots[slot],
-                                     egress=self.egress.get(slot, ""))
+                    return SlotLease(
+                        slot=slot, url=self.slots[slot], egress=self.egress.get(slot, "")
+                    )
                 now = time.time()
                 if now >= deadline:
                     raise self._no_slot_reason_locked(exclude, accept, now)
@@ -334,16 +351,18 @@ class ProxySlotPool:
         """
         free_any = self._pick_locked(exclude, None)
         if accept is not None and free_any is not None:
-            return NoEligibleSlot(
-                f"{self.size} 个槽位里没有一个合格（有空闲但出口配额均已满）")
-        cooling = [i for i in range(self.size)
-                   if i not in exclude and self._cooldown_until.get(i, 0) > now]
+            return NoEligibleSlot(f"{self.size} 个槽位里没有一个合格（有空闲但出口配额均已满）")
+        cooling = [
+            i for i in range(self.size) if i not in exclude and self._cooldown_until.get(i, 0) > now
+        ]
         if cooling and all(self._bans.get(i, 0) > 0 for i in cooling):
             return NoEligibleSlot(
                 f"{len(cooling)} 个槽位全在**配额冷却**中"
-                f"（最近一次到期还需 {int(min(self._cooldown_until[i] for i in cooling) - now)}s）")
-        return TimeoutError(f"等待空闲槽位超时（{self.size} 个槽位，"
-                            f"在外 {len(self._busy)}，冷却 {len(cooling)}）")
+                f"（最近一次到期还需 {int(min(self._cooldown_until[i] for i in cooling) - now)}s）"
+            )
+        return TimeoutError(
+            f"等待空闲槽位超时（{self.size} 个槽位，在外 {len(self._busy)}，冷却 {len(cooling)}）"
+        )
 
     def _release_locked(self, lease: SlotLease) -> None:
         self._busy.pop(lease.slot, None)
@@ -373,13 +392,13 @@ class ProxySlotPool:
             self._bans[lease.slot] = n
             cool = min(self.cooldown * (2 ** (n - 1)), self.cooldown_max)
             self._cooldown_until[lease.slot] = time.time() + cool
-            self._warn(f"[pool] {lease} 判死（{reason or 'quota'}）"
-                       f" → 冷却 {int(cool)}s（第 {n} 次）")
+            self._warn(
+                f"[pool] {lease} 判死（{reason or 'quota'}） → 冷却 {int(cool)}s（第 {n} 次）"
+            )
             self._release_locked(lease)
             self._save_state_locked()
 
-    def report_failed(self, lease: SlotLease, reason: str = "",
-                      cooldown: float = 20.0) -> None:
+    def report_failed(self, lease: SlotLease, reason: str = "", cooldown: float = 20.0) -> None:
         """网络类偶发失败 —— **短冷却**（默认 20s），不递增退避。
 
         🔴 与 `report_banned` 分开的理由：把"偶发超时"当"被封"处理，
@@ -390,8 +409,7 @@ class ProxySlotPool:
             return
         with self._cond:
             self._cooldown_until[lease.slot] = time.time() + cooldown
-            self._warn(f"[pool] {lease} 偶发失败（{reason[:60]}）"
-                       f" → 冷却 {int(cooldown)}s")
+            self._warn(f"[pool] {lease} 偶发失败（{reason[:60]}） → 冷却 {int(cooldown)}s")
             self._release_locked(lease)
 
     # ── 展示 ──────────────────────────────────────────────────
@@ -410,20 +428,22 @@ class ProxySlotPool:
         s = self.stats()
         n = s["distinct_egress"]
         if n is None:
-            tail = ("⚠ 未登记出口 IP 映射 → **未启用同 IP 互斥**，"
-                    "同出口可能被并发租用（跑 tools/probes/probe_slots.py 量出来）")
+            tail = (
+                "⚠ 未登记出口 IP 映射 → **未启用同 IP 互斥**，"
+                "同出口可能被并发租用（跑 tools/probes/probe_slots.py 量出来）"
+            )
         elif n < self.size:
-            tail = (f"⚠ {self.size} 个槽位只有 **{n}** 个不同出口 IP "
-                    f"→ 并发上限是 {n}，不是 {self.size}"
-                    f"（多出来的槽位不提供额外配额）")
+            tail = (
+                f"⚠ {self.size} 个槽位只有 **{n}** 个不同出口 IP "
+                f"→ 并发上限是 {n}，不是 {self.size}"
+                f"（多出来的槽位不提供额外配额）"
+            )
         else:
             tail = f"{n} 个不同出口 IP"
-        return (f"{self.size} 槽位 / 在外 {s['busy']} / 冷却 {s['cooling']}"
-                f" / {tail}")
+        return f"{self.size} 槽位 / 在外 {s['busy']} / 冷却 {s['cooling']} / {tail}"
 
 
-def build_pool(*, log=None, cooldown: float = None,
-               preflight: bool = None) -> ProxySlotPool | None:
+def build_pool(*, log=None, cooldown: float = None, preflight: bool = None) -> ProxySlotPool | None:
     """按配置建池。**没配槽位就返回 `None`**（调用方据此退回单代理/直连）。
 
     🔴 预检失败（一个槽位都连不上）时抛 `AllSlotsDead` —— 不静默退回，
@@ -446,13 +466,16 @@ def build_pool(*, log=None, cooldown: float = None,
             raise AllSlotsDead(
                 f"槽位端口全部连不上（{len(slots)}/{len(slots)}）。\n"
                 f"  槽位实例是**独立前台进程**，很容易「配置还留着、进程已经没了」。\n"
-                f"  起实例： \"$FO_MIHOMO_EXE\" -d .workbuddy-ai/proxypool "
+                f'  起实例： "$FO_MIHOMO_EXE" -d .workbuddy-ai/proxypool '
                 f"-f .workbuddy-ai/proxypool/config.yaml\n"
                 f"  ⚠ 不静默退回单代理：那样每条记录都会以「代理连接错误」收场，"
-                f"而「注册全失败」最容易被误读成「IP 又被封了」。")
+                f"而「注册全失败」最容易被误读成「IP 又被封了」。"
+            )
         if dead:
-            log(f"[pool] ⚠ {len(dead)}/{len(slots)} 个槽位端口连不上，"
-                f"已剔除：{[f'slot{i + 1}' for i in dead]}")
+            log(
+                f"[pool] ⚠ {len(dead)}/{len(slots)} 个槽位端口连不上，"
+                f"已剔除：{[f'slot{i + 1}' for i in dead]}"
+            )
             slots = [u for i, u in enumerate(slots) if alive.get(i)]
 
     return ProxySlotPool(slots, cooldown=cooldown, log=log)

@@ -221,15 +221,18 @@ def normalize_invite_code(raw: str) -> str:
     if len(code) > INVITE_CODE_MAXLEN:
         raise ValueError(
             f"邀请码过长（{len(code)} > {INVITE_CODE_MAXLEN}）：{code[:16]}…\n"
-            f"  前端 maxLength=32，超过这个长度的值服务端行为未知。")
+            f"  前端 maxLength=32，超过这个长度的值服务端行为未知。"
+        )
     if not code.isalnum():
         bad = sorted({c for c in code if not c.isalnum()})
         raise ValueError(
             f"邀请码含非字母数字字符 {bad}：{code!r}\n"
             f"  实测码的形态是 8 位大写字母数字（形如 R5AZGYNU）。\n"
             f"  ⚠ 服务端**不校验**邀请码，所以写错的码不会报错 ——"
-            f"只会让推荐关系静默不成立。这里拦下来是为了别让它静默发生。")
+            f"只会让推荐关系静默不成立。这里拦下来是为了别让它静默发生。"
+        )
     return code
+
 
 # 站点是否开验证码 —— **实测关闭**（`registration.captchaEnabled=false`）。
 # 保留这个开关是为了"哪天站点开了验证码"能立刻看出来：
@@ -259,8 +262,12 @@ PROXY_SLOT_TIMEOUT = _env_num(os.getenv("FO_PROXY_SLOT_TIMEOUT", ""), 240.0, flo
 # 🔴 默认开的理由：槽位实例是**独立前台进程**，很容易"配置还在、进程没了"。
 #    那种状态下每条记录都以"代理连接错误"收场，而"注册全失败"最容易被
 #    误读成"IP 又被封了" —— 结论完全错。
-PROXY_PREFLIGHT = os.getenv("FO_PROXY_PREFLIGHT", "1").strip().lower() \
-    not in ("0", "false", "no", "off")
+PROXY_PREFLIGHT = os.getenv("FO_PROXY_PREFLIGHT", "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+    "off",
+)
 
 # 🔴 槽位端口 → 出口 IP 的映射。**不进仓库**（出口 IP 是基础设施标识）。
 #    实测（2026-09-26，本机 mihomo 6 槽）：
@@ -338,7 +345,8 @@ def slot_scope(url: str) -> str:
             f"  1) 先量出真实出口 IP： python tools/probes/probe_slots.py\n"
             f"  2) 写进 .env（**不要写进源码**）：\n"
             f"       FO_SLOT_EGRESS_IPS={port}=<那个槽位的出口 IP>\n"
-            f"     多个槽位用逗号分隔：7901=1.1.1.1,7902=2.2.2.2")
+            f"     多个槽位用逗号分隔：7901=1.1.1.1,7902=2.2.2.2"
+        )
     return ip
 
 
@@ -362,7 +370,8 @@ def proxies(raw: str = None) -> dict | None:
         else:
             raise ValueError(
                 f"代理串格式无法识别：{raw!r}"
-                f"（期望 host:port:user:pass 或 scheme://user:pass@host:port）")
+                f"（期望 host:port:user:pass 或 scheme://user:pass@host:port）"
+            )
     return {"http": raw, "https": raw}
 
 
@@ -404,8 +413,8 @@ def validate(*, need_worker_token: bool = True) -> list[str]:
             missing.append("FO_WORKER_DOMAIN")
     else:
         missing.append(
-            f"FO_MAILBOX_KIND（未知取值 {MAILBOX_KIND!r}，"
-            f"只认 {' / '.join(MAILBOX_KINDS)}）")
+            f"FO_MAILBOX_KIND（未知取值 {MAILBOX_KIND!r}，只认 {' / '.join(MAILBOX_KINDS)}）"
+        )
 
     # 配了槽位池却没给「端口 → 出口 IP」映射：`slot_scope()` 会在**第一个任务**
     # 才抛错，那时已经跑了一半。提前到启动阶段报。
@@ -417,7 +426,8 @@ def validate(*, need_worker_token: bool = True) -> list[str]:
     if has_slots and not SLOT_EGRESS_IPS:
         missing.append(
             "FO_SLOT_EGRESS_IPS（已配槽位池但缺「端口=出口IP」映射；"
-            "先跑 python tools/probes/probe_slots.py 量出来）")
+            "先跑 python tools/probes/probe_slots.py 量出来）"
+        )
 
     # 邀请码：只校验**格式**，不校验存在性（服务端自己都不查）。
     # 🔴 放在这里拦，是因为"码写错"是**不会报错**的失败 ——

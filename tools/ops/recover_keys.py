@@ -61,14 +61,22 @@ def _needs_recovery(rec: dict, *, refresh: bool) -> bool:
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="从线上账号把 API Key 捞回台账（不消耗注册配额）",
-        formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--apply", action="store_true",
-                    help="真写回台账（**默认干跑**，只报告要写什么）")
-    ap.add_argument("--refresh", action="store_true",
-                    help="连**已有 key** 的记录也重新拉一遍（核对台账是否与线上一致）")
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    ap.add_argument(
+        "--apply", action="store_true", help="真写回台账（**默认干跑**，只报告要写什么）"
+    )
+    ap.add_argument(
+        "--refresh",
+        action="store_true",
+        help="连**已有 key** 的记录也重新拉一遍（核对台账是否与线上一致）",
+    )
     ap.add_argument("--email", help="只处理这一个账号")
-    ap.add_argument("--key-name", default="default",
-                    help="账号上有 key 但名字不匹配时，按这个名单选（默认 default）")
+    ap.add_argument(
+        "--key-name",
+        default="default",
+        help="账号上有 key 但名字不匹配时，按这个名单选（默认 default）",
+    )
     ap.add_argument("--ledger", help="指定台账读源（默认：最新全量快照）")
     args = ap.parse_args()
 
@@ -95,8 +103,7 @@ def main() -> int:
             c.fetch_csrf()
             lg = c.login(rec["email"], rec["password"])
             if not lg.ok:
-                print(f"  ✗ {email:44s} 登录失败：{lg.error}"
-                      f"{f'（{lg.code}）' if lg.code else ''}")
+                print(f"  ✗ {email:44s} 登录失败：{lg.error}{f'（{lg.code}）' if lg.code else ''}")
                 still_missing.append((rec, f"login: {lg.error}"))
                 continue
             keys = c.list_keys()
@@ -119,15 +126,18 @@ def main() -> int:
             continue
 
         if pick.get("name") != args.key_name:
-            print(f"  ⚠ {email:44s} 没有名为 {args.key_name!r} 的 key，"
-                  f"取到的是 {pick.get('name')!r}（**已如实记下名字**）")
+            print(
+                f"  ⚠ {email:44s} 没有名为 {args.key_name!r} 的 key，"
+                f"取到的是 {pick.get('name')!r}（**已如实记下名字**）"
+            )
 
         rec["api_key"] = secret
         rec["key_id"] = str(pick.get("id") or "")
         rec["key_masked"] = str(pick.get("masked") or opc.mask_key(secret))
         stages = dict(rec.get("stages") or {})
-        stages["recovered"] = (f"from live account (name={pick.get('name')!r}, "
-                               f"createdAt={pick.get('createdAt')})")
+        stages["recovered"] = (
+            f"from live account (name={pick.get('name')!r}, createdAt={pick.get('createdAt')})"
+        )
         rec["stages"] = stages
         recovered.append(rec)
         print(f"  ✓ {email:44s} 捞到 {rec['key_masked']}（{pick.get('name')!r}）")
@@ -155,11 +165,15 @@ def main() -> int:
         print(f"✗ {ex}", file=sys.stderr)
         return _cli.EXIT_NO_SHRINK
 
-    print(f"\n台账已写回：\n"
-          f"  快照（读源） {snap.relative_to(_ledger.ROOT)}\n"
-          f"  本批结果     {last.relative_to(_ledger.ROOT)}")
-    print(f"  合并：原有 {kept} + 捞回 {added}"
-          f"{f'（{upgraded} 条字段已更新）' if upgraded else ''} = {len(merged)} 条")
+    print(
+        f"\n台账已写回：\n"
+        f"  快照（读源） {snap.relative_to(_ledger.ROOT)}\n"
+        f"  本批结果     {last.relative_to(_ledger.ROOT)}"
+    )
+    print(
+        f"  合并：原有 {kept} + 捞回 {added}"
+        f"{f'（{upgraded} 条字段已更新）' if upgraded else ''} = {len(merged)} 条"
+    )
     print("\n⚠ 这份台账含明文 key。它整目录 gitignored —— 别把内容贴出去。")
     return _cli.EXIT_OK
 

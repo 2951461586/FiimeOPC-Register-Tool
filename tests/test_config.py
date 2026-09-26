@@ -65,7 +65,8 @@ class TestEnvExampleCoverage:
         missing = sorted(read - documented)
         assert not missing, (
             f"这些变量 config.py 会读，但 .env.example 里没有：{missing}\n"
-            f"  → 补进 .env.example，并写清默认值与实测依据")
+            f"  → 补进 .env.example，并写清默认值与实测依据"
+        )
 
     def test_no_phantom_env_vars_documented(self):
         """反方向：`.env.example` 里不该有代码从不读的 `FO_*`。
@@ -86,7 +87,8 @@ class TestEnvExampleCoverage:
         assert not phantom, (
             f"这些变量在 .env.example 里，但没有任何代码读它们：{phantom}\n"
             f"  → 要么是拼写错了，要么该删。留着会让用户以为调了有用。\n"
-            f"  → 若确实只是给人看的（不进代码），加进 ENV_DOC_ONLY 并写明理由")
+            f"  → 若确实只是给人看的（不进代码），加进 ENV_DOC_ONLY 并写明理由"
+        )
 
     def test_env_doc_only_entries_are_actually_documented(self):
         """白名单自己也会腐烂 —— 被删掉的变量不该留在白名单里。"""
@@ -116,7 +118,8 @@ class TestEnvExampleCoverage:
             shown = m.group(1).strip()
             # 数字按数值比，避免 "62" vs "62.0" 这种假红
             assert float(shown) == float(val), (
-                f"{name}：模板写 {shown}，代码默认 {val} —— 模板必须等于默认值")
+                f"{name}：模板写 {shown}，代码默认 {val} —— 模板必须等于默认值"
+            )
 
     def test_string_defaults_in_example_match_code(self):
         """字符串类默认值也要一致（数值那条用 float 比，管不了它们）。
@@ -129,7 +132,8 @@ class TestEnvExampleCoverage:
             m = re.search(rf"^\s*{name}=(.+)$", text, re.M)
             assert m, f"{name} 在 .env.example 里没有赋值行"
             assert m.group(1).strip() == val, (
-                f"{name}：模板写 {m.group(1).strip()!r}，代码默认 {val!r}")
+                f"{name}：模板写 {m.group(1).strip()!r}，代码默认 {val!r}"
+            )
 
 
 # ── 交叉引用完整性 ────────────────────────────────────────────────
@@ -144,9 +148,12 @@ class TestToolReferencesExist:
 
     def _refs(self):
         out = {}
-        files = list(SRC_DIR.rglob("*.py")) + [ROOT / "run.py"] \
-            + list(TOOLS_DIR.rglob("*.py")) + [ROOT / "README.md",
-                                               ROOT / "docs" / "protocol.md"]
+        files = (
+            list(SRC_DIR.rglob("*.py"))
+            + [ROOT / "run.py"]
+            + list(TOOLS_DIR.rglob("*.py"))
+            + [ROOT / "README.md", ROOT / "docs" / "protocol.md"]
+        )
         for f in files:
             if not f.is_file():
                 continue
@@ -158,16 +165,16 @@ class TestToolReferencesExist:
         refs = self._refs()
         assert refs, "一个 tools/ 引用都没扫到 —— 正则或路径假设错了"
         broken = {r: sorted(w) for r, w in refs.items() if not (ROOT / r).is_file()}
-        assert not broken, (
-            "这些被引用的脚本不存在：\n"
-            + "\n".join(f"  {r}  ← {', '.join(w)}" for r, w in sorted(broken.items())))
+        assert not broken, "这些被引用的脚本不存在：\n" + "\n".join(
+            f"  {r}  ← {', '.join(w)}" for r, w in sorted(broken.items())
+        )
 
     def test_probe_scripts_are_referenced_somewhere(self):
         """反向：`tools/` 下的脚本不该是孤儿（没人知道它存在就等于没有）。"""
         all_text = "\n".join(
             f.read_text(encoding="utf-8")
-            for f in [ROOT / "README.md", ROOT / "docs" / "protocol.md",
-                      *SRC_DIR.rglob("*.py")])
+            for f in [ROOT / "README.md", ROOT / "docs" / "protocol.md", *SRC_DIR.rglob("*.py")]
+        )
         orphans = []
         for f in TOOLS_DIR.rglob("*.py"):
             rel = f.relative_to(ROOT).as_posix()
@@ -192,8 +199,7 @@ class TestValidate:
     def test_unknown_mailbox_kind_is_reported(self, monkeypatch):
         monkeypatch.setattr(config, "MAILBOX_KIND", "cf")
         missing = config.validate()
-        assert any("FO_MAILBOX_KIND" in m for m in missing), \
-            "刻意不认别名 cf —— 必须报出来"
+        assert any("FO_MAILBOX_KIND" in m for m in missing), "刻意不认别名 cf —— 必须报出来"
 
     def test_slots_without_egress_map_is_reported(self, monkeypatch):
         """🔴 配了槽位池却没有「端口 → 出口 IP」映射，必须在**启动时**报。
@@ -258,12 +264,16 @@ class TestProxySlots:
 
     def test_parses_commas_and_newlines_and_comments(self, monkeypatch):
         monkeypatch.setattr(config, "IR_PROXY_SLOTS_FILE", "")
-        monkeypatch.setattr(config, "IR_PROXY_SLOTS",
-                            "http://127.0.0.1:7901, http://127.0.0.1:7902\n"
-                            "# 注释行\nhttp://127.0.0.1:7903")
+        monkeypatch.setattr(
+            config,
+            "IR_PROXY_SLOTS",
+            "http://127.0.0.1:7901, http://127.0.0.1:7902\n# 注释行\nhttp://127.0.0.1:7903",
+        )
         assert config.proxy_slots() == [
-            "http://127.0.0.1:7901", "http://127.0.0.1:7902",
-            "http://127.0.0.1:7903"]
+            "http://127.0.0.1:7901",
+            "http://127.0.0.1:7902",
+            "http://127.0.0.1:7903",
+        ]
 
     def test_missing_file_raises_not_silently_empty(self, monkeypatch, tmp_path):
         """🔴 指向的文件不存在 ⇒ 抛错，**不能**静默返回空。
@@ -271,8 +281,7 @@ class TestProxySlots:
         静默返回空的后果：池化模式悄悄退化成直连，所有账号挤一个出口 IP，
         表现是"批量全灭" —— 而真正的原因（路径写错）完全看不出来。
         """
-        monkeypatch.setattr(config, "IR_PROXY_SLOTS_FILE",
-                            str(tmp_path / "nope.txt"))
+        monkeypatch.setattr(config, "IR_PROXY_SLOTS_FILE", str(tmp_path / "nope.txt"))
         monkeypatch.setattr(config, "IR_PROXY_SLOTS", "")
         with pytest.raises(ValueError, match="不存在"):
             config.proxy_slots()
@@ -342,12 +351,10 @@ class TestInviteCodeWiring:
         不报错，推荐关系悄悄不成立。
         """
         src = CONFIG_PY.read_text(encoding="utf-8")
-        m = re.search(r'^INVITE_CODE\s*=\s*os\.getenv\("FO_INVITE_CODE".*$',
-                      src, re.M)
+        m = re.search(r'^INVITE_CODE\s*=\s*os\.getenv\("FO_INVITE_CODE".*$', src, re.M)
         assert m, "找不到 INVITE_CODE 的模块级读取行（改名了？）"
         line = m.group(0)
-        assert ".strip()" in line and ".upper()" in line, \
-            f"INVITE_CODE 读取行缺少规范化：{line}"
+        assert ".strip()" in line and ".upper()" in line, f"INVITE_CODE 读取行缺少规范化：{line}"
 
     def test_validate_reports_malformed_code(self, monkeypatch):
         """🔴 码不合法必须在 `validate()` 里报出来 —— 它是在**起飞前**跑的。
@@ -385,8 +392,9 @@ class TestConstants:
 
     def test_default_model_is_a_text_model_name(self):
         assert config.DEFAULT_MODEL.startswith("opc-")
-        assert "txt" in config.DEFAULT_MODEL, \
+        assert "txt" in config.DEFAULT_MODEL, (
             "默认示例模型必须是 text 类，否则 chat/completions 的示例会报错"
+        )
 
     def test_account_types_cover_default(self):
         assert config.ACCOUNT_TYPE in config.ACCOUNT_TYPES

@@ -62,8 +62,12 @@ def snapshot_path(when=None) -> Path:
     `when` 传 epoch 秒（不传 = 现在）。存在的唯一理由是让测试能钉住路径格式。
     """
     t = time.localtime() if when is None else time.localtime(when)
-    return (LEDGER_DIR / RUNS_DIRNAME / time.strftime("%Y-%m-%d", t)
-            / f"{SNAPSHOT_STEM}-{time.strftime('%Y%m%d-%H%M%S', t)}.json")
+    return (
+        LEDGER_DIR
+        / RUNS_DIRNAME
+        / time.strftime("%Y-%m-%d", t)
+        / f"{SNAPSHOT_STEM}-{time.strftime('%Y%m%d-%H%M%S', t)}.json"
+    )
 
 
 def snapshot_paths() -> list:
@@ -76,8 +80,7 @@ def snapshot_paths() -> list:
     runs = LEDGER_DIR / RUNS_DIRNAME
     if not runs.is_dir():
         return []
-    found = [p for p in runs.glob(f"*/{SNAPSHOT_STEM}-*.json")
-             if SNAPSHOT_RE.match(p.name)]
+    found = [p for p in runs.glob(f"*/{SNAPSHOT_STEM}-*.json") if SNAPSHOT_RE.match(p.name)]
     return sorted(found, key=lambda p: (p.parent.name, p.name))
 
 
@@ -94,8 +97,7 @@ def ledger_path() -> Path:
     snaps = snapshot_paths()
     if snaps:
         return snaps[-1]
-    return (LEDGER_DIR / RUNS_DIRNAME / "__none__"
-            / f"{SNAPSHOT_STEM}-none.json")
+    return LEDGER_DIR / RUNS_DIRNAME / "__none__" / f"{SNAPSHOT_STEM}-none.json"
 
 
 def last_run_path() -> Path:
@@ -161,7 +163,7 @@ def merge_records(existing: list, new: list) -> tuple:
     for rec in existing:
         email = rec.get("email")
         if email and email in idx:
-            continue                      # 同 email 的旧重复记录，留第一条
+            continue  # 同 email 的旧重复记录，留第一条
         if email:
             idx[email] = len(merged)
         merged.append(rec)
@@ -180,10 +182,10 @@ def merge_records(existing: list, new: list) -> tuple:
         cur = merged[pos]
         r_new, r_old = rank(rec), rank(cur)
         if r_new > r_old:
-            merged[pos] = rec                     # 升级：整体替换
+            merged[pos] = rec  # 升级：整体替换
             upgraded += 1
         elif r_new == r_old:
-            union = {**cur, **rec}                # 同级：并集，新值胜出
+            union = {**cur, **rec}  # 同级：并集，新值胜出
             if union != cur:
                 merged[pos] = union
                 upgraded += 1
@@ -255,7 +257,8 @@ def _guard_no_shrink(records: list, existing) -> None:
     if len(records) < len(existing):
         raise ValueError(
             f"拒绝写盘：合并后 {len(records)} 条 < 原有 {len(existing)} 条"
-            f"（防静默缩水）。确认要覆盖请显式调用 save(..., existing=[])")
+            f"（防静默缩水）。确认要覆盖请显式调用 save(..., existing=[])"
+        )
 
 
 def _atomic_write(path, records: list) -> None:
@@ -265,8 +268,7 @@ def _atomic_write(path, records: list) -> None:
        留下的就是**语法不完整的 JSON** ⇒ 下次 `load_existing()` 返回 `[]`
        ⇒ 合并退化成"只有本次" ⇒ **静默丢台账**。
     """
-    fsutil.atomic_write_text(
-        path, json.dumps(records, ensure_ascii=False, indent=2))
+    fsutil.atomic_write_text(path, json.dumps(records, ensure_ascii=False, indent=2))
 
 
 def save(path, records: list, *, existing: list | None = None) -> Path:
@@ -283,8 +285,9 @@ def save(path, records: list, *, existing: list | None = None) -> Path:
     return p
 
 
-def save_snapshot(merged: list, batch: list | None = None, *,
-                  existing: list | None = None, when=None) -> tuple:
+def save_snapshot(
+    merged: list, batch: list | None = None, *, existing: list | None = None, when=None
+) -> tuple:
     """正式落盘：**全量快照** + **本批结果**。返回 `(快照路径, 本批路径)`。
 
     三个动作，顺序不能换：
@@ -339,10 +342,13 @@ def key_coverage(records, known_keys) -> tuple:
       ⚠ 返回的 `missing` 只覆盖**台账有、清单没有**这一个方向。
     """
     return _coverage_of(
-        [r.get("api_key") for r in records
-         if isinstance(r, dict)
-         and str(r.get("api_key") or "").startswith(KEY_PREFIX)],
-        known_keys)
+        [
+            r.get("api_key")
+            for r in records
+            if isinstance(r, dict) and str(r.get("api_key") or "").startswith(KEY_PREFIX)
+        ],
+        known_keys,
+    )
 
 
 def account_coverage(records, known_emails) -> tuple:
@@ -352,9 +358,7 @@ def account_coverage(records, known_emails) -> tuple:
     `key_coverage` 管"我核验了多少把 key"，`account_coverage` 管
     "我能从哪个池子里取账号"。
     """
-    return _coverage_of(
-        [r.get("email") for r in records if isinstance(r, dict)],
-        known_emails)
+    return _coverage_of([r.get("email") for r in records if isinstance(r, dict)], known_emails)
 
 
 def _repo_rel(path) -> str:

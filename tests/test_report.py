@@ -27,16 +27,21 @@ class _QuotaStub:
 
 def _render(results, capsys, written=None):
     render_batch_report(
-        results, written or __import__("pathlib").Path("ledger/x.json"), 12.0,
-        workers=4, config=config, quota=_QuotaStub(),
-        error_kind_of=error_kind_of, err_ip_quota=ERR_IP_QUOTA,
-        err_quota_guard=ERR_QUOTA_GUARD)
+        results,
+        written or __import__("pathlib").Path("ledger/x.json"),
+        12.0,
+        workers=4,
+        config=config,
+        quota=_QuotaStub(),
+        error_kind_of=error_kind_of,
+        err_ip_quota=ERR_IP_QUOTA,
+        err_quota_guard=ERR_QUOTA_GUARD,
+    )
     return capsys.readouterr().out
 
 
 def _ok(email, key="opc_sk_abc", verified: bool | None = True, **kw):
-    return AccountRecord(email=email, api_key=key, status="success",
-                         key_verified=verified, **kw)
+    return AccountRecord(email=email, api_key=key, status="success", key_verified=verified, **kw)
 
 
 # ── 耗时格式化 ────────────────────────────────────────────────────
@@ -51,10 +56,10 @@ class TestLatencySummary:
         assert out.count("/") == 3
         vals = [p.strip() for p in out.split("/")]
         assert len(vals) == 4
-        assert vals[0] == "2.5"          # 均值
-        assert vals[1] == "2.5"          # 中位
-        assert vals[2] == "1.0"          # 最快
-        assert vals[3] == "4.0"          # 最慢
+        assert vals[0] == "2.5"  # 均值
+        assert vals[1] == "2.5"  # 中位
+        assert vals[2] == "1.0"  # 最快
+        assert vals[3] == "4.0"  # 最慢
 
     def test_empty_is_empty(self):
         assert latency_summary([]) == ""
@@ -67,7 +72,7 @@ class TestLatencySummary:
         """
         assert fmt_ms(None) == "-"
         assert fmt_ms("") == "-"
-        assert fmt_ms(0) == "0.0"        # 真的 0 才是 0.0
+        assert fmt_ms(0) == "0.0"  # 真的 0 才是 0.0
 
 
 # ── 交付完整性 ────────────────────────────────────────────────────
@@ -169,16 +174,21 @@ class TestInviteSection:
         assert "推荐关系" not in out
 
     def test_reports_confirmed_referral(self, capsys):
-        r = _ok("a@x.com", invite_code="ZQ9QEVJJ",
-                invited_at=1788000000000, stages={"invite": "ok"})
+        r = _ok(
+            "a@x.com", invite_code="ZQ9QEVJJ", invited_at=1788000000000, stages={"invite": "ok"}
+        )
         out = _render([r], capsys)
         assert "邀请码（推荐关系）：1/1 个已确认受邀" in out
         assert "ZQ9QEVJJ" in out
 
     def test_flags_code_sent_but_not_recorded(self, capsys):
         """🔴 发码了但 `invitedAt` 为 0 ⇒ 必须显式报出来并解释为什么不报错。"""
-        r = _ok("a@x.com", invite_code="ZQ9QEVJJ", invited_at=0,
-                stages={"invite": "⚠ 已发码但服务端未记录受邀"})
+        r = _ok(
+            "a@x.com",
+            invite_code="ZQ9QEVJJ",
+            invited_at=0,
+            stages={"invite": "⚠ 已发码但服务端未记录受邀"},
+        )
         out = _render([r], capsys)
         assert "0/1 个已确认受邀" in out
         assert "已发码但服务端未记录受邀" in out
@@ -191,10 +201,12 @@ class TestInviteSection:
         把它们算进分母，会把"没走到"误报成"码废了"，那是**假警报**，
         比不报更坏：它会让人去改一个根本没问题的码。
         """
-        done = _ok("a@x.com", invite_code="ZQ9QEVJJ",
-                   invited_at=1788000000000, stages={"invite": "ok"})
-        stuck = AccountRecord(email="b@x.com", status="failed",
-                              invite_code="ZQ9QEVJJ", error="mail: 超时")
+        done = _ok(
+            "a@x.com", invite_code="ZQ9QEVJJ", invited_at=1788000000000, stages={"invite": "ok"}
+        )
+        stuck = AccountRecord(
+            email="b@x.com", status="failed", invite_code="ZQ9QEVJJ", error="mail: 超时"
+        )
         out = _render([done, stuck], capsys)
         assert "1/1 个已确认受邀" in out, "分母被没走完的账号污染了"
         assert "2 个账号发出了码" in out
@@ -202,25 +214,29 @@ class TestInviteSection:
 
     def test_reports_when_nothing_reached_a_conclusion(self, capsys):
         """全都半路失败 ⇒ 说清"无法判断"，不要报 0/0 这种读不出意思的东西。"""
-        stuck = AccountRecord(email="a@x.com", status="failed",
-                              invite_code="ZQ9QEVJJ", error="mail: 超时")
+        stuck = AccountRecord(
+            email="a@x.com", status="failed", invite_code="ZQ9QEVJJ", error="mail: 超时"
+        )
         out = _render([stuck], capsys)
         assert "无法判断" in out
         assert "见下面「失败」一节" in out
 
     def test_lists_multiple_codes_when_mixed(self, capsys):
         """一批里混了两个码（临时换码跑了一半）⇒ 两个都要列出来。"""
-        a = _ok("a@x.com", invite_code="ZQ9QEVJJ",
-                invited_at=1, stages={"invite": "ok"})
-        b = _ok("b@x.com", invite_code="R5AZGYNU",
-                invited_at=1, stages={"invite": "ok"})
+        a = _ok("a@x.com", invite_code="ZQ9QEVJJ", invited_at=1, stages={"invite": "ok"})
+        b = _ok("b@x.com", invite_code="R5AZGYNU", invited_at=1, stages={"invite": "ok"})
         out = _render([a, b], capsys)
         assert "ZQ9QEVJJ" in out and "R5AZGYNU" in out
 
     def test_does_not_leak_plaintext_key(self, capsys):
         """这一节也不能漏出 key 明文（它不在「调用方式」/「成功账号」两节里）。"""
-        r = _ok("a@x.com", key="opc_sk_SECRET123", invite_code="ZQ9QEVJJ",
-                invited_at=1, stages={"invite": "ok"})
+        r = _ok(
+            "a@x.com",
+            key="opc_sk_SECRET123",
+            invite_code="ZQ9QEVJJ",
+            invited_at=1,
+            stages={"invite": "ok"},
+        )
         out = _render([r], capsys)
         assert out.count("opc_sk_SECRET123") == 2
 
@@ -228,9 +244,13 @@ class TestInviteSection:
 # ── 失败归因 ──────────────────────────────────────────────────────
 class TestFailureAttribution:
     def test_ip_quota_advice_says_rate_limit_tuning_is_useless(self, capsys):
-        r = AccountRecord(email="a@x.com", status="failed",
-                          error="register: 该 IP 今日注册数量已达上限",
-                          error_kind=ERR_IP_QUOTA, egress="1.2.3.4")
+        r = AccountRecord(
+            email="a@x.com",
+            status="failed",
+            error="register: 该 IP 今日注册数量已达上限",
+            error_kind=ERR_IP_QUOTA,
+            egress="1.2.3.4",
+        )
         out = _render([r], capsys)
         assert "出口被判死" in out
         assert "1.2.3.4" in out
@@ -243,9 +263,12 @@ class TestFailureAttribution:
         判据走 `error_kind_of()`（结构化字段）。若按文本匹配，我们自己拼的
         守卫文案里也含"已达上限"，会把"一个请求都没发的主动中止"算成封禁。
         """
-        r = AccountRecord(email="b@x.com", status="failed",
-                          error="本地守卫：该 IP 已达上限，未发请求",
-                          error_kind=ERR_QUOTA_GUARD)
+        r = AccountRecord(
+            email="b@x.com",
+            status="failed",
+            error="本地守卫：该 IP 已达上限，未发请求",
+            error_kind=ERR_QUOTA_GUARD,
+        )
         out = _render([r], capsys)
         assert "本地守卫主动中止" in out
         assert "出口被判死" not in out
@@ -256,9 +279,12 @@ class TestFailureAttribution:
         这条用例的存在意义是证明上面那条不是空跑 —— 如果文本匹配也能得出
         正确结论，那 `error_kind_of()` 这个结构化字段就是多余的。
         """
-        r = AccountRecord(email="b@x.com", status="failed",
-                          error="本地守卫：该 IP 已达上限，未发请求",
-                          error_kind="")
+        r = AccountRecord(
+            email="b@x.com",
+            status="failed",
+            error="本地守卫：该 IP 已达上限，未发请求",
+            error_kind="",
+        )
         # 抹掉结构化字段后，`error_kind_of` 的文案兜底会把它读成 ip_quota。
         assert error_kind_of(r) == ERR_IP_QUOTA
         out = _render([r], capsys)
@@ -266,8 +292,9 @@ class TestFailureAttribution:
 
     def test_error_kind_of_tolerates_old_records(self):
         """老台账没有 `error_kind` 字段 ⇒ 靠文案兜底，不能炸。"""
-        r = AccountRecord(email="a@x.com", status="failed",
-                          error="register: 该 IP 今日注册数量已达上限")
+        r = AccountRecord(
+            email="a@x.com", status="failed", error="register: 该 IP 今日注册数量已达上限"
+        )
         assert error_kind_of(r) == ERR_IP_QUOTA
         assert error_kind_of(r) != ERR_QUOTA_GUARD
 

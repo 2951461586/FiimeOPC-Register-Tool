@@ -65,9 +65,12 @@ def site_reachable(url: str) -> str:
     """
     px = {"http": url, "https": url}
     try:
-        r = requests.get(f"{config.SITE_BASE}/api/settings/public",
-                         proxies=px, timeout=TIMEOUT,
-                         headers={"Accept": "application/json"})
+        r = requests.get(
+            f"{config.SITE_BASE}/api/settings/public",
+            proxies=px,
+            timeout=TIMEOUT,
+            headers={"Accept": "application/json"},
+        )
         return f"HTTP {r.status_code}"
     except requests.RequestException as ex:
         return f"{type(ex).__name__}"
@@ -75,8 +78,11 @@ def site_reachable(url: str) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--slots", default=None,
-                    help="逗号分隔的槽位 URL（默认取 FO_PROXY_SLOTS_FILE / FO_PROXY_SLOTS）")
+    ap.add_argument(
+        "--slots",
+        default=None,
+        help="逗号分隔的槽位 URL（默认取 FO_PROXY_SLOTS_FILE / FO_PROXY_SLOTS）",
+    )
     args = ap.parse_args()
 
     if args.slots:
@@ -99,8 +105,7 @@ def main() -> int:
         site = site_reachable(url) if ip else "-"
         rows.append((port, url, ip, site))
         mark = "✓" if ip else "✗"
-        print(f"  {mark} slot{i} {url:<26} 出口 {ip or '(取不到)':<16} 站点 {site}",
-              flush=True)
+        print(f"  {mark} slot{i} {url:<26} 出口 {ip or '(取不到)':<16} 站点 {site}", flush=True)
 
     good = [(p, u, ip, s) for p, u, ip, s in rows if ip]
     if not good:
@@ -113,8 +118,7 @@ def main() -> int:
     if len(distinct) < len(good):
         print(f"  ⚠ 有槽位共用出口 —— **并发上限是 {len(distinct)}，不是 {len(good)}**")
         print("    多出来的槽位不提供额外配额，只会让同一个 IP 更快撞穿。")
-    print(f"\n  每个出口每日上限 {quota.limit()} 个"
-          f"（本地保护值，见 src/quota.py）")
+    print(f"\n  每个出口每日上限 {quota.limit()} 个（本地保护值，见 src/quota.py）")
     print(f"  ⇒ 本池理论日产能 ≈ {len(distinct) * quota.limit()} 个")
 
     unreachable = [(p, s) for p, _, ip, s in good if not s.startswith("HTTP 200")]

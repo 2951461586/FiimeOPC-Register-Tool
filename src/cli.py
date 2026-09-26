@@ -38,7 +38,7 @@ def force_utf8_stdio(streams=None) -> None:
 
     `streams` 仅供测试注入；默认取 `sys.stdout` / `sys.stderr`。
     """
-    for stream in (streams if streams is not None else (sys.stdout, sys.stderr)):
+    for stream in streams if streams is not None else (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
         if reconfigure is None:
             continue
@@ -70,10 +70,10 @@ EXIT_KEY_UNVERIFIED = 5
 # 🔴 help 文本提成常量，**不是**为了少打几个字 —— 是为了能被断言。
 #    测试会跑各入口的 `--help`，断言这两句逐字出现，这样"某个入口又把 help
 #    抄成自己的一份"会当场变红。
-SLOT_HELP = ("槽位端口，如 7901（默认取 FO_PROXY_SLOTS_FILE 的第一个）。"
-             "不传且没配池子 = 直连")
-IGNORE_QUOTA_HELP = ("跳过本地配额保护（仅当**确信**服务端配额已恢复时用；"
-                     "本地计数是保守估计，不是权威值）")
+SLOT_HELP = "槽位端口，如 7901（默认取 FO_PROXY_SLOTS_FILE 的第一个）。不传且没配池子 = 直连"
+IGNORE_QUOTA_HELP = (
+    "跳过本地配额保护（仅当**确信**服务端配额已恢复时用；本地计数是保守估计，不是权威值）"
+)
 
 
 def add_ignore_quota_arg(ap: argparse.ArgumentParser) -> None:
@@ -88,8 +88,9 @@ def add_ignore_quota_arg(ap: argparse.ArgumentParser) -> None:
 
 def add_key_name_arg(ap: argparse.ArgumentParser, default: str = "default") -> None:
     """加 `--key-name`。"""
-    ap.add_argument("--key-name", default=default,
-                    help=f"API Key 名称（默认 {default}；每账号最多 5 把）")
+    ap.add_argument(
+        "--key-name", default=default, help=f"API Key 名称（默认 {default}；每账号最多 5 把）"
+    )
 
 
 def merge_summary_line(kept: int, added: int, upgraded: int, total: int) -> str:

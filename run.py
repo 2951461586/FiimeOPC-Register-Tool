@@ -57,20 +57,26 @@ def _print_pool_summary() -> int:
                 # 🔴 服务端确认的判死**不是**本地保守估计 —— 把两者混成一句，
                 #    读者会以为“本地窗口太悲观”而去调大上限、继续对着一个
                 #    已死的出口打请求。
-                print("  ⚠ 服务端**已确认**该出口当日不可用（收到过 IP 日配额的 "
-                      "429）—— 这**不是**本地的保守估计。\n"
-                      "    唯一解法是换出口 IP，或等次日服务端恢复。"
-                      "调 FO_IP_QUOTA_MAX / --ignore-quota 只会继续撞墙。",
-                      flush=True)
+                print(
+                    "  ⚠ 服务端**已确认**该出口当日不可用（收到过 IP 日配额的 "
+                    "429）—— 这**不是**本地的保守估计。\n"
+                    "    唯一解法是换出口 IP，或等次日服务端恢复。"
+                    "调 FO_IP_QUOTA_MAX / --ignore-quota 只会继续撞墙。",
+                    flush=True,
+                )
             else:
-                print("  ⚠ 窗口内计数已达上限。这是**保守估计** —— 服务端恢复时间未知，"
-                      "本地窗口取的是偏保守值。\n"
-                      "    若确信服务端已恢复，可加 --ignore-quota 或调大 FO_IP_QUOTA_MAX。",
-                      flush=True)
+                print(
+                    "  ⚠ 窗口内计数已达上限。这是**保守估计** —— 服务端恢复时间未知，"
+                    "本地窗口取的是偏保守值。\n"
+                    "    若确信服务端已恢复，可加 --ignore-quota 或调大 FO_IP_QUOTA_MAX。",
+                    flush=True,
+                )
         return st.remaining
 
-    print(f"🔀 槽位池：{len(slots)} 个槽位已配置"
-          f"（{config.IR_PROXY_SLOTS_FILE or 'FO_PROXY_SLOTS'}）", flush=True)
+    print(
+        f"🔀 槽位池：{len(slots)} 个槽位已配置（{config.IR_PROXY_SLOTS_FILE or 'FO_PROXY_SLOTS'}）",
+        flush=True,
+    )
     seen: dict = {}
     total_left = 0
     try:
@@ -88,8 +94,10 @@ def _print_pool_summary() -> int:
             else:
                 mark = f"余 {left}"
             dup = "" if first else "（与前面的槽位同出口，额度已计入）"
-            print(f"     slot{i} {url:<24} 出口 {ip:<16} "
-                  f"{st.used:>2}/{st.limit}  {mark}{dup}", flush=True)
+            print(
+                f"     slot{i} {url:<24} 出口 {ip:<16} {st.used:>2}/{st.limit}  {mark}{dup}",
+                flush=True,
+            )
             if first:
                 total_left += left
     except ValueError as ex:
@@ -97,9 +105,12 @@ def _print_pool_summary() -> int:
         return -1
 
     n_egress = len(seen)
-    print(f"   ── {len(slots)} 槽 / {n_egress} 个不同出口，"
-          f"合计可用额度 {total_left} 个"
-          f"（⚠ 并发上限是 {n_egress}，不是 {len(slots)}）", flush=True)
+    print(
+        f"   ── {len(slots)} 槽 / {n_egress} 个不同出口，"
+        f"合计可用额度 {total_left} 个"
+        f"（⚠ 并发上限是 {n_egress}，不是 {len(slots)}）",
+        flush=True,
+    )
     return total_left
 
 
@@ -135,8 +146,9 @@ def _cmd_probe() -> int:
         #    纯协议链路解不了。不要"试一下再说" —— 那会白烧一个出口的额度。
         print("\n  ✗ 站点已**开启注册验证码** —— 纯协议链路无法通过。")
         print("    验证码是 SVG 图形题（`/api/captcha/new` 返回 {captchaId,svg,type}）。")
-        print("    需要改走浏览器方案（参考项目 Intern-Register-Tool 的 "
-              "src/browser/ 是现成的骨架）。")
+        print(
+            "    需要改走浏览器方案（参考项目 Intern-Register-Tool 的 src/browser/ 是现成的骨架）。"
+        )
         rc = 2
 
     svc = pub.get("modules", {}).get("modelService", {})
@@ -156,8 +168,7 @@ def _cmd_probe() -> int:
         for i, ok in alive.items():
             print(f"  slot{i + 1} {slots[i]:<24} {'✓ 监听中' if ok else '✗ 连不上'}")
         if not any(alive.values()):
-            print("  ✗ 一个槽位都连不上 —— 池子没起来。"
-                  "跑 README「起槽位池」那三条命令。")
+            print("  ✗ 一个槽位都连不上 —— 池子没起来。跑 README「起槽位池」那三条命令。")
             rc = rc or 4
     else:
         print("  （未配置槽位池 → 会走直连，单 IP 一天只能注册几个）")
@@ -165,36 +176,48 @@ def _cmd_probe() -> int:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(
-        description="FiimeOPC 注册 + 邮箱激活 + API Key 提取")
+    ap = argparse.ArgumentParser(description="FiimeOPC 注册 + 邮箱激活 + API Key 提取")
     ap.add_argument("--count", type=int, default=1, help="注册账号数量")
-    ap.add_argument("--workers", type=int, default=4,
-                    help="**登录侧**并发数（注册侧由每出口闸门控制，调大它没用）")
+    ap.add_argument(
+        "--workers",
+        type=int,
+        default=4,
+        help="**登录侧**并发数（注册侧由每出口闸门控制，调大它没用）",
+    )
     _cli.add_key_name_arg(ap)
-    ap.add_argument("--slot", default=None,
-                    help="指定单个出口槽位（如 7903）。不传 = 用整个池子")
-    ap.add_argument("--direct", action="store_true",
-                    help="不用池子，直连（单 IP；一天只能注册几个，仅调试用）")
-    ap.add_argument("--mail-domain", default=None,
-                    help="临时邮箱域名（默认取 FO_WORKER_DOMAIN）")
-    ap.add_argument("--invite-code", default=None,
-                    help="注册邀请码。**默认取 FO_INVITE_CODE**（统一注入，"
-                         "一般不用传这个开关）；传空串 `--invite-code ''` 可"
-                         "临时关掉。⚠ 服务端不校验码是否存在，码错了不会报错，"
-                         "只会让推荐关系静默不成立。")
-    ap.add_argument("--out", default=None,
-                    help="结果输出文件。**不填（默认）= 写进台账目录**："
-                         "ledger/runs/<日期>/results-<时间戳>.json（合并后的全量快照，"
-                         "也是台账读源）+ ledger/latest.json（本批结果）。"
-                         "显式给路径则只写那一个文件、不落快照。")
-    ap.add_argument("--overwrite", action="store_true",
-                    help="只写本次结果、不合并历史（默认按 email 合并，"
-                         "防止一次小规模探测覆盖掉整个账号台账）")
+    ap.add_argument("--slot", default=None, help="指定单个出口槽位（如 7903）。不传 = 用整个池子")
+    ap.add_argument(
+        "--direct", action="store_true", help="不用池子，直连（单 IP；一天只能注册几个，仅调试用）"
+    )
+    ap.add_argument("--mail-domain", default=None, help="临时邮箱域名（默认取 FO_WORKER_DOMAIN）")
+    ap.add_argument(
+        "--invite-code",
+        default=None,
+        help="注册邀请码。**默认取 FO_INVITE_CODE**（统一注入，"
+        "一般不用传这个开关）；传空串 `--invite-code ''` 可"
+        "临时关掉。⚠ 服务端不校验码是否存在，码错了不会报错，"
+        "只会让推荐关系静默不成立。",
+    )
+    ap.add_argument(
+        "--out",
+        default=None,
+        help="结果输出文件。**不填（默认）= 写进台账目录**："
+        "ledger/runs/<日期>/results-<时间戳>.json（合并后的全量快照，"
+        "也是台账读源）+ ledger/latest.json（本批结果）。"
+        "显式给路径则只写那一个文件、不落快照。",
+    )
+    ap.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="只写本次结果、不合并历史（默认按 email 合并，防止一次小规模探测覆盖掉整个账号台账）",
+    )
     ap.add_argument("--quiet", action="store_true", help="只输出汇总")
-    ap.add_argument("--no-verify", action="store_true",
-                    help="跳过末尾的 key 可用性校验")
-    ap.add_argument("--probe-key", action="store_true",
-                    help="额外用 key 真发一次 /v1/chat/completions（**会消耗 Token**）")
+    ap.add_argument("--no-verify", action="store_true", help="跳过末尾的 key 可用性校验")
+    ap.add_argument(
+        "--probe-key",
+        action="store_true",
+        help="额外用 key 真发一次 /v1/chat/completions（**会消耗 Token**）",
+    )
     _cli.add_ignore_quota_arg(ap)
 
     sub = ap.add_subparsers(dest="cmd")
@@ -209,8 +232,10 @@ def main() -> int:
     missing = config.validate()
     if missing:
         print(f"✗ 缺少必需配置：{'、'.join(missing)}", file=sys.stderr)
-        print("  修法：cp .env.example .env 并填入真实值"
-              "（.env 已在 .gitignore 中，不会进仓库）", file=sys.stderr)
+        print(
+            "  修法：cp .env.example .env 并填入真实值（.env 已在 .gitignore 中，不会进仓库）",
+            file=sys.stderr,
+        )
         return 1
 
     # 起飞前探一次注册开关 —— 验证码一开，整链白跑。
@@ -225,8 +250,11 @@ def main() -> int:
         print("✗ 站点已关闭注册，拒绝开跑。", file=sys.stderr)
         return 1
     if reg.get("captchaEnabled"):
-        print("✗ 站点已开启注册验证码 —— 纯协议链路无法通过。\n"
-              "  验证码是 SVG 图形题，需改走浏览器方案。", file=sys.stderr)
+        print(
+            "✗ 站点已开启注册验证码 —— 纯协议链路无法通过。\n"
+            "  验证码是 SVG 图形题，需改走浏览器方案。",
+            file=sys.stderr,
+        )
         return 1
 
     # ── 邀请码：起飞前**规范化 + 印出来** ────────────────────────
@@ -240,15 +268,19 @@ def main() -> int:
     #      唯一的痕迹就是这一行，和报告末尾的「推荐关系」一节。
     try:
         eff_invite = config.normalize_invite_code(
-            config.INVITE_CODE if args.invite_code is None else args.invite_code)
+            config.INVITE_CODE if args.invite_code is None else args.invite_code
+        )
     except ValueError as ex:
         print(f"✗ 邀请码不合法：{ex}", file=sys.stderr)
         return 1
     if eff_invite:
         src = "--invite-code" if args.invite_code is not None else "FO_INVITE_CODE"
-        print(f"🎟  邀请码：{eff_invite}（来源 {src}）\n"
-              f"    ⚠ 服务端**不校验码是否存在** —— 码错了照样注册成功。"
-              f"判据只有报告末尾的「推荐关系」一节。", flush=True)
+        print(
+            f"🎟  邀请码：{eff_invite}（来源 {src}）\n"
+            f"    ⚠ 服务端**不校验码是否存在** —— 码错了照样注册成功。"
+            f"判据只有报告末尾的「推荐关系」一节。",
+            flush=True,
+        )
     else:
         print("🎟  邀请码：未设置 —— 这批账号不会挂在任何邀请人名下。", flush=True)
 
@@ -281,15 +313,20 @@ def main() -> int:
         if not args.quiet:
             print(f"\n▶ 单账号模式（出口 {proxy or '直连'}）", flush=True)
         try:
-            rec = run_one(key_name=args.key_name, mail_domain=args.mail_domain,
-                          proxy=proxy or "", verbose=not args.quiet,
-                          verify=not args.no_verify, probe=args.probe_key,
-                          # 🔴 传**已规范化**的 `eff_invite`（str）而不是原始
-                          #    `args.invite_code`（可能是 None）：语义完全一样
-                          #    （`None` 在 `stage_register` 里也是回落到
-                          #    `config.INVITE_CODE`，而那已经过同一套规范化），
-                          #    但省掉一个 Optional，调用链的类型一致。
-                          invite_code=eff_invite)
+            rec = run_one(
+                key_name=args.key_name,
+                mail_domain=args.mail_domain,
+                proxy=proxy or "",
+                verbose=not args.quiet,
+                verify=not args.no_verify,
+                probe=args.probe_key,
+                # 🔴 传**已规范化**的 `eff_invite`（str）而不是原始
+                #    `args.invite_code`（可能是 None）：语义完全一样
+                #    （`None` 在 `stage_register` 里也是回落到
+                #    `config.INVITE_CODE`，而那已经过同一套规范化），
+                #    但省掉一个 Optional，调用链的类型一致。
+                invite_code=eff_invite,
+            )
         except proxypool.AllSlotsDead as ex:
             print(f"\n✗ {ex}", file=sys.stderr)
             return _cli.EXIT_ALL_SLOTS_DEAD
@@ -299,6 +336,7 @@ def main() -> int:
         # ⚠ `--slot` / `--direct` 与池模式互斥：显式指定单出口时，临时把
         #   池子配置关掉，让 run_batch 走 `lease=None` 那条路。
         import os
+
         saved_file = config.IR_PROXY_SLOTS_FILE
         saved_inline = config.IR_PROXY_SLOTS
         if args.slot or args.direct:
@@ -313,10 +351,14 @@ def main() -> int:
                 config.IR_PROXY_SLOTS = f"http://127.0.0.1:{args.slot}"
         try:
             results = run_batch(
-                count=args.count, workers=args.workers,
-                key_name=args.key_name, mail_domain=args.mail_domain,
-                verbose=not args.quiet, ignore_quota=args.ignore_quota,
-                verify=not args.no_verify, probe=args.probe_key,
+                count=args.count,
+                workers=args.workers,
+                key_name=args.key_name,
+                mail_domain=args.mail_domain,
+                verbose=not args.quiet,
+                ignore_quota=args.ignore_quota,
+                verify=not args.no_verify,
+                probe=args.probe_key,
                 invite_code=eff_invite,
             )
         except proxypool.AllSlotsDead as ex:
@@ -354,15 +396,17 @@ def main() -> int:
     try:
         if out is None:
             snap, last = _ledger.save_snapshot(
-                merged, new_records, existing=[] if args.overwrite else None)
+                merged, new_records, existing=[] if args.overwrite else None
+            )
             written = snap
-            print(f"\n台账已落盘：\n"
-                  f"  快照（读源） {snap.relative_to(_ledger.ROOT)}\n"
-                  f"  本批结果     {last.relative_to(_ledger.ROOT)}"
-                  f"（{len(new_records)} 条）")
+            print(
+                f"\n台账已落盘：\n"
+                f"  快照（读源） {snap.relative_to(_ledger.ROOT)}\n"
+                f"  本批结果     {last.relative_to(_ledger.ROOT)}"
+                f"（{len(new_records)} 条）"
+            )
         else:
-            written = _ledger.save(out, merged,
-                                   existing=[] if args.overwrite else None)
+            written = _ledger.save(out, merged, existing=[] if args.overwrite else None)
     except ValueError as ex:
         # 防静默缩水护栏。少数据但指标全"正常"是最坏的失败，
         # 宁可报错退出也不要静默丢掉账号。
@@ -372,9 +416,16 @@ def main() -> int:
     # 收尾报告整块在 `src/report.py`（测试链不该 import `run.py` —— 它会把
     # 整套 pipeline 拉进 sys.path）。依赖全部**注入**，报告层只依赖 stdlib。
     _report.render_batch_report(
-        results, written, wall, workers=args.workers, config=config, quota=quota,
-        error_kind_of=error_kind_of, err_ip_quota=ERR_IP_QUOTA,
-        err_quota_guard=ERR_QUOTA_GUARD)
+        results,
+        written,
+        wall,
+        workers=args.workers,
+        config=config,
+        quota=quota,
+        error_kind_of=error_kind_of,
+        err_ip_quota=ERR_IP_QUOTA,
+        err_quota_guard=ERR_QUOTA_GUARD,
+    )
 
     # ── 退出码：交付完整性 ────────────────────────────────────
     # 🔴 `status == "success"` 只说明"key 建出来了"，**不代表它能调用**。
@@ -384,11 +435,13 @@ def main() -> int:
     #    所以只要有一个 key 明确校验不过，就非零退出。
     #    `--no-verify`（`key_verified is None`）**不算失败** —— 那是用户
     #    显式选择不校验，不是我们校验失败。
-    broken = [r for r in results
-              if r.key_verified is not None and not r.key_verified]
+    broken = [r for r in results if r.key_verified is not None and not r.key_verified]
     if broken:
-        print(f"\n✗ {len(broken)} 个 key 建出来了但**校验不过**，"
-              f"这批交付不完整（见上面的「交付完整性」一节）", file=sys.stderr)
+        print(
+            f"\n✗ {len(broken)} 个 key 建出来了但**校验不过**，"
+            f"这批交付不完整（见上面的「交付完整性」一节）",
+            file=sys.stderr,
+        )
         return _cli.EXIT_KEY_UNVERIFIED
     return _cli.EXIT_OK
 

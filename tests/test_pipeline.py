@@ -39,11 +39,13 @@ class _QuotaBlockedClient:
     def gen_available_username(self):
         return "lz123456"
 
-    def register(self, username, email, password, *, account_type=None,
-                 invite_code=""):
+    def register(self, username, email, password, *, account_type=None, invite_code=""):
         return opc.RegisterResult(
-            ok=False, http_status=429, limit_kind=opc.LIMIT_IP_QUOTA,
-            error="该 IP 今日注册数量已达上限，请明日再试或联系管理员")
+            ok=False,
+            http_status=429,
+            limit_kind=opc.LIMIT_IP_QUOTA,
+            error="该 IP 今日注册数量已达上限，请明日再试或联系管理员",
+        )
 
 
 def _client() -> opc.OpcClient:
@@ -58,8 +60,8 @@ def _isolated_state(tmp_path, monkeypatch):
 def test_ip_quota_records_a_ban_on_the_scope():
     rec = pipeline.AccountRecord()
     ok = pipeline.stage_register(
-        _FakeMail(), _client(), rec,
-        quota_scope="203.0.113.11", invite_code="", log=lambda *a: None)
+        _FakeMail(), _client(), rec, quota_scope="203.0.113.11", invite_code="", log=lambda *a: None
+    )
 
     assert ok is False
     assert rec.error_kind == pipeline.ERR_IP_QUOTA
@@ -74,8 +76,8 @@ def test_ban_is_written_even_when_state_dir_is_new(tmp_path, monkeypatch):
     nested = tmp_path / "deep" / "nested" / "q.jsonl"
     monkeypatch.setenv("FO_QUOTA_STATE", str(nested))
     rec = pipeline.AccountRecord()
-    pipeline.stage_register(_FakeMail(), _client(), rec,
-                            quota_scope="203.0.113.12", invite_code="",
-                            log=lambda *a: None)
+    pipeline.stage_register(
+        _FakeMail(), _client(), rec, quota_scope="203.0.113.12", invite_code="", log=lambda *a: None
+    )
     assert nested.is_file()
     assert quota.status("203.0.113.12").banned

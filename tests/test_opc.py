@@ -16,9 +16,10 @@ class TestClassify429:
         assert opc.classify_429("注册过于频繁，请一分钟后再试") == opc.LIMIT_RATE
 
     def test_ip_quota(self):
-        assert opc.classify_429(
-            "该 IP 今日注册数量已达上限，请明日再试或联系管理员"
-        ) == opc.LIMIT_IP_QUOTA
+        assert (
+            opc.classify_429("该 IP 今日注册数量已达上限，请明日再试或联系管理员")
+            == opc.LIMIT_IP_QUOTA
+        )
 
     def test_unknown_falls_back_to_rate(self):
         """未知文案 → 当速率处理。
@@ -130,33 +131,44 @@ class TestFindActivationUrl:
           现在按 RFC 3986 字符集匹配，中文标点从源头就进不来。
         """
         body = "请点击 https://opc.fiime.cn/activate?token=abc123。谢谢"
-        assert opc.find_activation_url(body) == \
-            "https://opc.fiime.cn/activate?token=abc123"
+        assert opc.find_activation_url(body) == "https://opc.fiime.cn/activate?token=abc123"
 
     def test_strips_various_cjk_punctuation(self):
         """中文标点种类很多，逐个钉一遍（全角括号 / 逗号 / 顿号 / 破折号）。"""
-        for tail in ("。", "，", "、", "；", "：", "！", "？", "）", "】",
-                     "」", "』", "…", "—", "～"):
+        for tail in (
+            "。",
+            "，",
+            "、",
+            "；",
+            "：",
+            "！",
+            "？",
+            "）",
+            "】",
+            "」",
+            "』",
+            "…",
+            "—",
+            "～",
+        ):
             body = f"链接：https://opc.fiime.cn/activate?token=abc123{tail}"
-            assert opc.find_activation_url(body) == \
-                "https://opc.fiime.cn/activate?token=abc123", tail
+            assert opc.find_activation_url(body) == "https://opc.fiime.cn/activate?token=abc123", (
+                tail
+            )
 
     def test_strips_ascii_trailing_punctuation(self):
         body = "see https://opc.fiime.cn/activate?token=abc123, then click"
-        assert opc.find_activation_url(body) == \
-            "https://opc.fiime.cn/activate?token=abc123"
+        assert opc.find_activation_url(body) == "https://opc.fiime.cn/activate?token=abc123"
 
     def test_link_inside_html_attr(self):
         """HTML 版邮件里 URL 被双引号包着 —— 引号必须截断匹配。"""
         body = '<a href="https://opc.fiime.cn/activate?token=abc123">go</a>'
-        assert opc.find_activation_url(body) == \
-            "https://opc.fiime.cn/activate?token=abc123"
+        assert opc.find_activation_url(body) == "https://opc.fiime.cn/activate?token=abc123"
 
     def test_link_inside_html_attr_with_punctuation(self):
         """双重陷阱：引号截断 + 属性后紧跟中文标点。"""
         body = '<a href="https://opc.fiime.cn/activate?token=abc123">点此</a>，谢谢'
-        assert opc.find_activation_url(body) == \
-            "https://opc.fiime.cn/activate?token=abc123"
+        assert opc.find_activation_url(body) == "https://opc.fiime.cn/activate?token=abc123"
 
     def test_rejects_foreign_host(self):
         """别的域名下的 /activate 不算 —— 邮件里可能有第三方的追踪链接。"""
@@ -175,8 +187,7 @@ class TestTokenFromUrl:
         assert opc.OpcClient.token_from_activation_url(u) == "deadbeef"
 
     def test_empty_when_missing(self):
-        assert opc.OpcClient.token_from_activation_url(
-            "https://opc.fiime.cn/activate") == ""
+        assert opc.OpcClient.token_from_activation_url("https://opc.fiime.cn/activate") == ""
 
     def test_extra_params_ok(self):
         u = "https://opc.fiime.cn/activate?token=abc&ref=x"
@@ -234,7 +245,7 @@ class TestRegisterHandles429:
 
     def _client(self, resp):
         c = opc.OpcClient(proxy=None, log=lambda *a: None)
-        c._post = lambda *a, **k: resp          # 打桩，不联网
+        c._post = lambda *a, **k: resp  # 打桩，不联网
         return c
 
     def test_rate_429_sets_limit_kind(self):
@@ -253,13 +264,20 @@ class TestRegisterHandles429:
         c = self._client(self._Resp(400, {"error": "密码必须包含字母"}))
         r = c.register("u", "e@x.com", "12345678")
         assert r.ok is False
-        assert r.limit_kind == ""            # 不是 429，不该有 limit_kind
+        assert r.limit_kind == ""  # 不是 429，不该有 limit_kind
         assert r.error == "密码必须包含字母"
 
     def test_200_parses_payload(self):
-        c = self._client(self._Resp(200, {
-            "user": {"id": "u_1", "opcId": "OPC-1", "username": "u"},
-            "needActivation": True, "registrationTokenReward": 100}))
+        c = self._client(
+            self._Resp(
+                200,
+                {
+                    "user": {"id": "u_1", "opcId": "OPC-1", "username": "u"},
+                    "needActivation": True,
+                    "registrationTokenReward": 100,
+                },
+            )
+        )
         r = c.register("u", "e@x.com", "Lz#abc123456")
         assert r.ok and r.need_activation and r.token_reward == 100
         assert r.user["opcId"] == "OPC-1"
@@ -322,7 +340,7 @@ class TestInviteCodeInRequest:
             return self._Resp(resp_body or {})
 
         c = opc.OpcClient(proxy=None, log=lambda *a: None)
-        c._post = spy                      # 打桩，不联网
+        c._post = spy  # 打桩，不联网
         return c, seen
 
     def test_code_is_normalised_before_sending(self):
@@ -390,18 +408,23 @@ class TestInviteCodeInRequest:
         ⇒ "注册时 reward=0" 是**奖励延后到激活**的正常现象，**不是**错误信号，
           更不能拿它判断码是否有效（早期就是这么误读的）。
         """
-        c, _ = self._client({"user": {"id": "u1", "invitedAt": 1788000000000},
-                             "needActivation": True,
-                             "registrationTokenReward": 0})
+        c, _ = self._client(
+            {
+                "user": {"id": "u1", "invitedAt": 1788000000000},
+                "needActivation": True,
+                "registrationTokenReward": 0,
+            }
+        )
         r = c.register("u", "e@x.com", "pw", invite_code="ZQ9QEVJJ")
         assert r.ok is True
-        assert r.token_reward == 0          # 正常，不是错误
+        assert r.token_reward == 0  # 正常，不是错误
         assert r.invited_at == 1788000000000
 
     def test_activate_parses_invited_at(self):
         """激活响应也要取 `invitedAt` —— 它可能就是**延后写入**的那个点。"""
-        c, _ = self._client({"user": {"id": "u1", "invitedAt": 1788000000000},
-                             "registrationTokenReward": 100000000})
+        c, _ = self._client(
+            {"user": {"id": "u1", "invitedAt": 1788000000000}, "registrationTokenReward": 100000000}
+        )
         r = c.activate("tok")
         assert r.ok and r.invited_at == 1788000000000
         assert r.token_reward == 100000000
@@ -426,8 +449,7 @@ class TestInviteCodeSurvivesRetry:
             def register(self, u, e, p, invite_code=""):
                 calls.append(invite_code)
                 if len(calls) == 1:
-                    return opc.RegisterResult(limit_kind=opc.LIMIT_RATE,
-                                              error="注册过于频繁")
+                    return opc.RegisterResult(limit_kind=opc.LIMIT_RATE, error="注册过于频繁")
                 return opc.RegisterResult(ok=True, user={"id": "u1"})
 
         class _Gate:
@@ -436,7 +458,8 @@ class TestInviteCodeSurvivesRetry:
 
         rec = pipeline.AccountRecord(username="u", email="e@x.com", password="pw")
         res = pipeline._register_with_retry(
-            _Client(), rec, _Gate(), "203.0.113.7", lambda *a: None, "ZQ9QEVJJ")
+            _Client(), rec, _Gate(), "203.0.113.7", lambda *a: None, "ZQ9QEVJJ"
+        )
 
         assert res.ok is True
         assert calls == ["ZQ9QEVJJ", "ZQ9QEVJJ"], f"重试时丢了邀请码：{calls}"
@@ -450,13 +473,15 @@ class TestInviteCodeSurvivesRetry:
         class _Client:
             def register(self, u, e, p, invite_code=""):
                 seen.append(invite_code)
-                return opc.RegisterResult(limit_kind=opc.LIMIT_IP_QUOTA,
-                                          error="该 IP 今日注册数量已达上限")
+                return opc.RegisterResult(
+                    limit_kind=opc.LIMIT_IP_QUOTA, error="该 IP 今日注册数量已达上限"
+                )
 
         rec = pipeline.AccountRecord(username="u", email="e@x.com", password="pw")
         with pytest.raises(pipeline._IpQuotaBlocked):
             pipeline._register_with_retry(
-                _Client(), rec, None, "203.0.113.7", lambda *a: None, "ZQ9QEVJJ")
+                _Client(), rec, None, "203.0.113.7", lambda *a: None, "ZQ9QEVJJ"
+            )
         assert seen == ["ZQ9QEVJJ"]
 
 
@@ -483,9 +508,11 @@ class TestLogin:
         assert r.ok and r.user["id"] == "u1"
 
     def test_email_not_activated_carries_code(self):
-        c = self._client(self._Resp(401, {
-            "error": "邮箱未激活", "code": "EMAIL_NOT_ACTIVATED",
-            "email": "e@x.com"}))
+        c = self._client(
+            self._Resp(
+                401, {"error": "邮箱未激活", "code": "EMAIL_NOT_ACTIVATED", "email": "e@x.com"}
+            )
+        )
         r = c.login("e@x.com", "p")
         assert not r.ok and r.code == "EMAIL_NOT_ACTIVATED"
 
@@ -528,6 +555,7 @@ class TestVerifyKeySemantics:
            `verify_key` 里 `r.headers.get(...)` 会抛 `AttributeError`，
            monkeypatch 的 `fake_get` 又把它吞成"网络异常"，用例假绿。
         """
+
         def __init__(self, status, text, *, ctype="", body=None):
             self.status_code = status
             self.ok = 200 <= status < 300
@@ -547,9 +575,12 @@ class TestVerifyKeySemantics:
 
         def fake_get(url, **kw):
             calls.append(url)
-            return self._R(401, '{"error":"API Key 无效"}',
-                           ctype="application/json",
-                           body={"error": {"code": "invalid_api_key"}})
+            return self._R(
+                401,
+                '{"error":"API Key 无效"}',
+                ctype="application/json",
+                body={"error": {"code": "invalid_api_key"}},
+            )
 
         monkeypatch.setattr(_rq, "get", fake_get)
         ok, why = opc.OpcClient.verify_key("k", attempts=3, delay=0)
@@ -563,7 +594,7 @@ class TestVerifyKeySemantics:
         """
         import requests as _rq
 
-        html = "<html>" + "x" * 6700 + "</html>"          # ≈6707 字节
+        html = "<html>" + "x" * 6700 + "</html>"  # ≈6707 字节
 
         def fake_get(url, **kw):
             return self._R(200, html, ctype="text/html; charset=utf-8")
@@ -584,11 +615,13 @@ class TestVerifyKeySemantics:
         def fake_get(url, **kw):
             state["n"] += 1
             if state["n"] < 3:
-                return self._R(200, "<html>edge not synced</html>",
-                               ctype="text/html")
-            return self._R(200, '{"data":[{"id":"m1"}]}',
-                           ctype="application/json; charset=utf-8",
-                           body={"data": [{"id": "m1"}]})
+                return self._R(200, "<html>edge not synced</html>", ctype="text/html")
+            return self._R(
+                200,
+                '{"data":[{"id":"m1"}]}',
+                ctype="application/json; charset=utf-8",
+                body={"data": [{"id": "m1"}]},
+            )
 
         monkeypatch.setattr(_rq, "get", fake_get)
         ok, why = opc.OpcClient.verify_key("k", attempts=4, delay=0)
@@ -601,8 +634,7 @@ class TestVerifyKeySemantics:
         import requests as _rq
 
         def fake_get(url, **kw):
-            return self._R(200, "<html>still not synced</html>",
-                           ctype="text/html")
+            return self._R(200, "<html>still not synced</html>", ctype="text/html")
 
         monkeypatch.setattr(_rq, "get", fake_get)
         ok, why = opc.OpcClient.verify_key("k", attempts=2, delay=0)
@@ -629,8 +661,7 @@ class TestVerifyKeySemantics:
 
         def fake_get(url, **kw):
             seen.append(url)
-            return self._R(200, '{"data":[]}', ctype="application/json",
-                           body={"data": []})
+            return self._R(200, '{"data":[]}', ctype="application/json", body={"data": []})
 
         monkeypatch.setattr(_rq, "get", fake_get)
         opc.OpcClient.verify_key("k", attempts=1, delay=0)
@@ -644,12 +675,10 @@ class TestVerifyKeySemantics:
 
         def fake_get(url, **kw):
             seen.append(url)
-            return self._R(200, '{"data":[]}', ctype="application/json",
-                           body={"data": []})
+            return self._R(200, '{"data":[]}', ctype="application/json", body={"data": []})
 
         monkeypatch.setattr(_rq, "get", fake_get)
-        opc.OpcClient.verify_key("k", base="https://gw.example.com/v1",
-                                 attempts=1, delay=0)
+        opc.OpcClient.verify_key("k", base="https://gw.example.com/v1", attempts=1, delay=0)
         assert seen[0] == "https://gw.example.com/v1/models"
 
 
@@ -678,18 +707,30 @@ class TestServiceInfo:
         "dailyTokenLimit": 500000000,
         "maxApiKeysPerUser": 5,
         "models": [
-            {"id": "opc-txt-v1", "object": "model", "type": "text",
-             "enabled": True, "debug": False, "rateMultiplier": 2},
-            {"id": "opc-image-v1", "object": "model", "type": "image",
-             "enabled": True},
-            {"id": "opc-video-v1", "object": "model", "type": "video",
-             "enabled": True},
-            {"id": "opc-txt-v2", "object": "model", "type": "text",
-             "enabled": True, "rateMultiplier": 2},
-            {"id": "sensenova-6-8-flash-lite", "object": "model",
-             "type": "text", "enabled": True},
-            {"id": "opc-txt-v0", "object": "model", "type": "text",
-             "enabled": False},                      # 停用的不该出现
+            {
+                "id": "opc-txt-v1",
+                "object": "model",
+                "type": "text",
+                "enabled": True,
+                "debug": False,
+                "rateMultiplier": 2,
+            },
+            {"id": "opc-image-v1", "object": "model", "type": "image", "enabled": True},
+            {"id": "opc-video-v1", "object": "model", "type": "video", "enabled": True},
+            {
+                "id": "opc-txt-v2",
+                "object": "model",
+                "type": "text",
+                "enabled": True,
+                "rateMultiplier": 2,
+            },
+            {"id": "sensenova-6-8-flash-lite", "object": "model", "type": "text", "enabled": True},
+            {
+                "id": "opc-txt-v0",
+                "object": "model",
+                "type": "text",
+                "enabled": False,
+            },  # 停用的不该出现
         ],
     }
 
@@ -706,8 +747,12 @@ class TestServiceInfo:
 
     def test_model_ids_only_enabled(self):
         assert self._si().model_ids() == [
-            "opc-txt-v1", "opc-image-v1", "opc-video-v1",
-            "opc-txt-v2", "sensenova-6-8-flash-lite"]
+            "opc-txt-v1",
+            "opc-image-v1",
+            "opc-video-v1",
+            "opc-txt-v2",
+            "sensenova-6-8-flash-lite",
+        ]
 
     def test_model_ids_can_include_disabled(self):
         assert "opc-txt-v0" in self._si().model_ids(only_enabled=False)
@@ -723,14 +768,12 @@ class TestServiceInfo:
 
     def test_default_model_falls_back_to_first_text(self):
         """配置里的默认模型不在服务端列表里 ⇒ 取第一个**文本**模型。"""
-        si = self._si(models=[{"id": "other-txt", "type": "text",
-                               "enabled": True}])
+        si = self._si(models=[{"id": "other-txt", "type": "text", "enabled": True}])
         assert si.default_model() == "other-txt"
 
     def test_default_model_never_returns_image(self):
         """一个文本模型都没有时，回落到配置值，**不要**返回 image 模型。"""
-        si = self._si(models=[{"id": "opc-image-v1", "type": "image",
-                               "enabled": True}])
+        si = self._si(models=[{"id": "opc-image-v1", "type": "image", "enabled": True}])
         assert si.default_model() == opc.config.DEFAULT_MODEL
 
     def test_describe_shape(self):
@@ -743,9 +786,7 @@ class TestServiceInfo:
         assert si.model_ids() == ["a", "b"]
 
     def test_tolerates_junk_entries(self):
-        si = self._si(models=[None, 3, {"no_id": 1}, {"id": "ok",
-                                                      "type": "text",
-                                                      "enabled": True}])
+        si = self._si(models=[None, 3, {"no_id": 1}, {"id": "ok", "type": "text", "enabled": True}])
         assert si.model_ids() == ["ok"]
 
     def test_empty_models(self):
@@ -771,8 +812,12 @@ class TestAccountRecordDeliveryFields:
     def test_serialises_new_fields(self):
         from src.pipeline import AccountRecord
 
-        r = AccountRecord(base_url="https://x/api/model-service/v1",
-                          key_verified=True, models=["m"], default_model="m")
+        r = AccountRecord(
+            base_url="https://x/api/model-service/v1",
+            key_verified=True,
+            models=["m"],
+            default_model="m",
+        )
         import json as _json
 
         d = _json.loads(r.to_json())
@@ -793,20 +838,39 @@ class TestListKeys:
     """
 
     REAL = {
-        "service": {"enabled": True, "apiBasePath": "/api/model-service/v1",
-                    "dailyTokenLimit": 500000000, "maxApiKeysPerUser": 5,
-                    "models": []},
-        "wallet": {"balance": 100000000, "totalEarned": 100000000,
-                   "totalSpent": 0},
-        "usage": {"date": "2026-09-26", "usedToday": 0,
-                  "dailyLimit": 500000000, "remainingToday": 500000000},
+        "service": {
+            "enabled": True,
+            "apiBasePath": "/api/model-service/v1",
+            "dailyTokenLimit": 500000000,
+            "maxApiKeysPerUser": 5,
+            "models": [],
+        },
+        "wallet": {"balance": 100000000, "totalEarned": 100000000, "totalSpent": 0},
+        "usage": {
+            "date": "2026-09-26",
+            "usedToday": 0,
+            "dailyLimit": 500000000,
+            "remainingToday": 500000000,
+        },
         "keys": [
-            {"id": "msk_aaa", "name": "default", "masked": "opc_sk_5aa2••••2d3a",
-             "secret": "opc_sk_5aa233312cea7d8c08a864dc54dda7212398209607292d3a",
-             "status": "active", "createdAt": 1790357521795, "lastUsedAt": 0},
-            {"id": "msk_bbb", "name": "prod", "masked": "opc_sk_79ca••••f18e",
-             "secret": "opc_sk_79cabc422d417711a6ef2891f8834694e9e4105472cff18e",
-             "status": "active", "createdAt": 1790358000000, "lastUsedAt": 0},
+            {
+                "id": "msk_aaa",
+                "name": "default",
+                "masked": "opc_sk_5aa2••••2d3a",
+                "secret": "opc_sk_5aa233312cea7d8c08a864dc54dda7212398209607292d3a",
+                "status": "active",
+                "createdAt": 1790357521795,
+                "lastUsedAt": 0,
+            },
+            {
+                "id": "msk_bbb",
+                "name": "prod",
+                "masked": "opc_sk_79ca••••f18e",
+                "secret": "opc_sk_79cabc422d417711a6ef2891f8834694e9e4105472cff18e",
+                "status": "active",
+                "createdAt": 1790358000000,
+                "lastUsedAt": 0,
+            },
         ],
     }
 

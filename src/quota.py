@@ -145,10 +145,13 @@ class QuotaStatus:
         who = f"出口 {self.scope}" if self.scope else "全局（未分出口）"
         tail = ""
         if self.banned:
-            tail = ("；**服务端已确认当日不可用**"
-                    + (f"（{self.ban_reason}）" if self.ban_reason else ""))
-        return (f"{who} 在 {self.window_h:g}h 窗口内已用 "
-                f"{self.used}/{self.limit}（余 {self.remaining}）{tail}")
+            tail = "；**服务端已确认当日不可用**" + (
+                f"（{self.ban_reason}）" if self.ban_reason else ""
+            )
+        return (
+            f"{who} 在 {self.window_h:g}h 窗口内已用 "
+            f"{self.used}/{self.limit}（余 {self.remaining}）{tail}"
+        )
 
 
 class QuotaExceeded(RuntimeError):
@@ -174,7 +177,7 @@ def _read_records(path: Path) -> list:
         try:
             rec = json.loads(line)
         except ValueError:
-            continue          # 半截行（进程被杀）直接跳过，不让它污染计数
+            continue  # 半截行（进程被杀）直接跳过，不让它污染计数
         if isinstance(rec, dict) and rec.get("ts"):
             out.append(rec)
     return out
@@ -204,8 +207,14 @@ def status(scope: str = "") -> QuotaStatus:
             reason = str(r.get("reason") or reason)
         else:
             used += 1
-    return QuotaStatus(scope=scope, used=used, limit=limit(),
-                       window_h=window_hours(), banned=banned, ban_reason=reason)
+    return QuotaStatus(
+        scope=scope,
+        used=used,
+        limit=limit(),
+        window_h=window_hours(),
+        banned=banned,
+        ban_reason=reason,
+    )
 
 
 def _now() -> int:
@@ -236,8 +245,7 @@ def record(email: str, scope: str = "") -> None:
     🔴 只有**成功**才记 —— 失败的不占额度，记了会让本地计数虚高，
       把一个还能用的出口提前停掉。
     """
-    _append({"ts": _now(), "kind": KIND_OK,
-             "scope": scope, "email": email})
+    _append({"ts": _now(), "kind": KIND_OK, "scope": scope, "email": email})
 
 
 def record_ban(scope: str, reason: str = "") -> None:
@@ -257,9 +265,15 @@ def record_ban(scope: str, reason: str = "") -> None:
       不应该让 `used` 虚高，否则"已用 5/5"和"服务端判死"两个不同事实
       会被混成一句 `describe()`。
     """
-    _append_quiet({"ts": _now(), "kind": KIND_BAN,
-                   "scope": scope, "email": "",
-                   "reason": (reason or "")[:200]})
+    _append_quiet(
+        {
+            "ts": _now(),
+            "kind": KIND_BAN,
+            "scope": scope,
+            "email": "",
+            "reason": (reason or "")[:200],
+        }
+    )
 
 
 def _append_quiet(rec: dict) -> None:
@@ -305,8 +319,9 @@ def _maybe_compact_locked(path: Path) -> None:
     fsutil.atomic_write_text(path, "\n".join(keep) + ("\n" if keep else ""))
 
 
-def check_or_raise(planned: int = 1, *, scope: str = "",
-                   allow_partial: bool = False) -> QuotaStatus:
+def check_or_raise(
+    planned: int = 1, *, scope: str = "", allow_partial: bool = False
+) -> QuotaStatus:
     """投递前检查。
 
     `allow_partial=True`：还有余量就放行（调用方自己裁计划量），
@@ -321,8 +336,7 @@ def check_or_raise(planned: int = 1, *, scope: str = "",
         # 🔴 两句话必须分开：`banned` 是**服务端确认**的硬证据，而纯 `used`
         #    触顶只是本地保守估计。说反了会让人以为"服务端又拒了一批"。
         if st.banned:
-            why = ("服务端已确认该出口**当日不可用**"
-                   "（收到过 IP 日配额的 429），不是本地猜测")
+            why = "服务端已确认该出口**当日不可用**（收到过 IP 日配额的 429），不是本地猜测"
         else:
             why = "本地计数已达上限（保守估计，不是服务端拒绝）"
         raise QuotaExceeded(
@@ -330,11 +344,13 @@ def check_or_raise(planned: int = 1, *, scope: str = "",
             f"  选项：\n"
             f"    ① 换出口（池化模式会自动做）；\n"
             f"    ② 等窗口滑出（{st.window_h:g}h 滚动）；\n"
-            f"    ③ 确信服务端已恢复 → 调大 FO_IP_QUOTA_MAX 或加 --ignore-quota")
+            f"    ③ 确信服务端已恢复 → 调大 FO_IP_QUOTA_MAX 或加 --ignore-quota"
+        )
     if not allow_partial and planned > st.remaining:
         raise QuotaExceeded(
             f"本地配额保护：计划 {planned} 个，但{st.describe()} —— 放不下。\n"
-            f"  想只跑余量：加 --allow-partial；想全跑：调大 FO_IP_QUOTA_MAX。")
+            f"  想只跑余量：加 --allow-partial；想全跑：调大 FO_IP_QUOTA_MAX。"
+        )
     return st
 
 
@@ -349,6 +365,8 @@ def shortfall_hint(total_left: int, planned: int, ignore: bool) -> str:
     """
     if ignore or total_left >= planned:
         return ""
-    return (f"  ⚠ 池子总余量 {total_left} < 计划 {planned} —— "
-            f"超出的部分会被跳过（未发请求）。\n"
-            f"    想跑满：等窗口滑出 / 加出口 / 调大 FO_IP_QUOTA_MAX。")
+    return (
+        f"  ⚠ 池子总余量 {total_left} < 计划 {planned} —— "
+        f"超出的部分会被跳过（未发请求）。\n"
+        f"    想跑满：等窗口滑出 / 加出口 / 调大 FO_IP_QUOTA_MAX。"
+    )
