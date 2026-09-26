@@ -15,7 +15,9 @@
      （⚠ 重发会**作废上一个 token**，必须取最新那封 —— 见 docs/protocol.md）；
   ③ 登录 → 建 key → 校验 → 回写台账（rank+并集，只补字段）。
 
-🔴 **默认干跑**：写台账不可逆，先看一遍要写什么，确认无误再加 `--apply`。
+🔴 **默认干跑（只读）**：激活 / 建 key 都是**服务端副作用、不可撤销**，所以
+   干跑**只报告**“能不能捞”（登录状态 + 现有邮件 token），不激活、不重发、
+   不建 key。确认后再加 `--apply` 真正执行 + 写回台账。
    激活 / 登录 / 建 key 都**不消耗注册配额**（那是注册阶段的专属成本，5 个/IP/天）。
 
 用法
@@ -69,6 +71,20 @@ def _newest_link(mails: list) -> tuple:
     return link, newest
 
 
+def _preview(mail, r: dict) -> str:
+    """干跑用：**只读**报告 —— 登录状态 + 现有邮件的 token 情况。"""
+    email, pwd = r["email"], r["password"]
+    c = opc.OpcClient(log=lambda *a: None)
+    c.fetch_csrf()
+    lg = c.login(email, pwd)
+    if lg.ok:
+        return "已激活（可直接建 key）"
+    link, _ = _newest_link(mail.list_mails(email))
+    tok = opc.OpcClient.token_from_activation_url(link) if link else ""
+    note = "token 有效（64）" if len(tok) == 64 else f"token 长度 {len(tok)}（需重发）"
+    return f"未激活；最新邮件 {note}"
+
+
 def _recover_one(mail, r: dict, key_name: str) -> tuple:
     """捞一个账号。返回 `(updated_dict_or_None, 失败原因)`。"""
     email, pwd = r["email"], r["password"]
@@ -76,7 +92,11 @@ def _recover_one(mail, r: dict, key_name: str) -> tuple:
     c.fetch_csrf()
     # ① 也许已经激活了，只是没建 key
     lg = c.login(email, pwd)
-    if not lg.ok and lg.code == "EMAIL_NOT_ACTIVATED":
+    if not lg.ok:
+        # 候选定义就是「注册成功但未激活」，所以登录失败基本就是没激活。
+        # 🔴 **不能** gate 在 `lg.code == "EMAIL_NOT_ACTIVATED"` 上：实测该字段
+        #    **是空的**（错误文案「请先激活邮箱后再登录」，`code` 缺失）—— 拿它
+        #    当闸门会让工具直接放弃，连激活都不试（踩过）。
         link, newest = _newest_link(mail.list_mails(email))
         print(f"  激活（现有链接：{'有' if link else '无'}）")
         act, resent = activate_with_resend(
@@ -157,6 +177,20 @@ def main() -> int:
     # ⚠ 刻意**不**调 `config.validate()`：捞回只需要站点 + 邮箱，缺 Worker token 时
     #    挡在这里会让"能不能捞回来"这个最该随时能答的问题答不上来。
     mail = mailbox.make_source()
+
+    if not args.apply:
+        # 🔴 干跑**只读**：激活 / 建 key 是**服务端副作用、不可撤销** —— 不能像
+        #    `recover_keys.py` 那样“先跑一遍看结果”（那会真的建出 key，之后
+        #    `--apply` 再来一次就多建一把）。所以干跑只报告“能不能捞”。
+        print("\n（干跑：只读，不动服务端；加 --apply 才会激活 / 建 key / 写台账）")
+        for r in todo:
+            try:
+                note = _preview(mail, r)
+            except Exception as ex:
+                note = f"{type(ex).__name__}: {ex}"
+            print(f"  {r['email']:44s} {note}")
+        return _cli.EXIT_OK
+
     recovered, still = [], []
     for r in todo:
         print(f"\n{r['email']}")
@@ -174,9 +208,6 @@ def main() -> int:
     for r, why in still:
         print(f"  ✗ {(r.get('email') or '(无邮箱)'):44s} {why}")
     if not recovered:
-        return _cli.EXIT_OK
-    if not args.apply:
-        print("\n🔴 干跑结束 —— **没有写盘**。确认上面的清单无误后加 --apply 再跑一次。")
         return _cli.EXIT_OK
 
     # 🔴 合并而不是覆盖：捞回的记录只改了 key/激活相关字段，merge_records 的
