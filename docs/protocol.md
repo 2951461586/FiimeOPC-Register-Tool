@@ -261,9 +261,9 @@ inviteCode: n.inviteCode || void 0, website})`。
  "wallet": {"balance": 100000000, "totalEarned": 100000000, "totalSpent": 0},
  "usage": {"date": "2026-09-26", "usedToday": 0,
            "dailyLimit": 500000000, "remainingToday": 500000000},
- "keys": [{"id": "msk_muh8n5364c1f46", "name": "default",
-           "masked": "opc_sk_5aa2••••••••2d3a",
-           "secret": "opc_sk_5aa233312cea7d8c08a864dc54dda7212398209607292d3a",
+ "keys": [{"id": "msk_0123456789abcdef", "name": "default",
+           "masked": "opc_sk_0123••••••••cdef",
+           "secret": "opc_sk_<64 hex>",
            "status": "active", "createdAt": 1790357521795, "lastUsedAt": 0}]}
 ```
 
@@ -301,8 +301,8 @@ key 列表必须从上面那个端点的 `keys` 字段取。
 {"name": "default"}
 
 // 成功响应
-{"key": {"id": "msk_muh8n5364c1f46", "name": "default",
-         "masked": "opc_sk_5aa2••••••••2d3a", "status": "active"},
+{"key": {"id": "msk_0123456789abcdef", "name": "default",
+         "masked": "opc_sk_0123••••••••cdef", "status": "active"},
  "secret": "opc_sk_<64 hex>"}
 ```
 

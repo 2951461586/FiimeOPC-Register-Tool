@@ -15,7 +15,9 @@
 import re
 from pathlib import Path
 
-import pytest
+# pytest 在 pyproject 的 dev 依赖里（真实解释器可解析）；这里加 ignore 只是因为
+# pi-lens 的语言服务器用的是另一个不含 pytest 的解释器。
+import pytest  # type: ignore[import-not-found]
 
 from src import config, quota
 
@@ -219,6 +221,9 @@ class TestValidate:
         """没配池子就不该要求映射表（直连模式是合法的）。"""
         monkeypatch.setattr(config, "MAILBOX_KIND", "worker")
         monkeypatch.setattr(config, "WORKER_ADMIN_TOKEN", "x")
+        # 不能依赖本地 `.env`（CI / 新克隆都没有）—— 显式满足 Worker 必需项。
+        monkeypatch.setattr(config, "WORKER_BASE", "https://worker.example")
+        monkeypatch.setattr(config, "WORKER_DOMAIN", "example-mail.test")
         monkeypatch.setattr(config, "IR_PROXY_SLOTS", "")
         monkeypatch.setattr(config, "IR_PROXY_SLOTS_FILE", "")
         monkeypatch.setattr(config, "SLOT_EGRESS_IPS", {})
@@ -467,6 +472,10 @@ class TestInviteCodeWiring:
         """把 `validate()` 里与邀请码无关的必需项都满足掉。"""
         monkeypatch.setattr(config, "MAILBOX_KIND", "worker")
         monkeypatch.setattr(config, "WORKER_ADMIN_TOKEN", "x")
+        # 🔴 Worker 地址/域名也要满足：不能依赖开发者本地的 `.env`
+        #    （CI / 新克隆都没有 `.env`，缺了这两项 `validate()` 会报出来）。
+        monkeypatch.setattr(config, "WORKER_BASE", "https://worker.example")
+        monkeypatch.setattr(config, "WORKER_DOMAIN", "example-mail.test")
         monkeypatch.setattr(config, "IR_PROXY_SLOTS", "")
         monkeypatch.setattr(config, "IR_PROXY_SLOTS_FILE", "")
         monkeypatch.setattr(config, "SLOT_EGRESS_IPS", {})

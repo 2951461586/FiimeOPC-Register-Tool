@@ -856,8 +856,8 @@ class TestListKeys:
             {
                 "id": "msk_aaa",
                 "name": "default",
-                "masked": "opc_sk_5aa2••••2d3a",
-                "secret": "opc_sk_5aa233312cea7d8c08a864dc54dda7212398209607292d3a",
+                "masked": "opc_sk_0123••••cdef",
+                "secret": "opc_sk_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
                 "status": "active",
                 "createdAt": 1790357521795,
                 "lastUsedAt": 0,
@@ -865,8 +865,8 @@ class TestListKeys:
             {
                 "id": "msk_bbb",
                 "name": "prod",
-                "masked": "opc_sk_79ca••••f18e",
-                "secret": "opc_sk_79cabc422d417711a6ef2891f8834694e9e4105472cff18e",
+                "masked": "opc_sk_fedc••••3210",
+                "secret": "opc_sk_fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
                 "status": "active",
                 "createdAt": 1790358000000,
                 "lastUsedAt": 0,
