@@ -309,7 +309,9 @@ class OpcClient:
         #    哪天站点把 CSRF 打开，这里不用改。空值不发头（避免 `X-CSRF-Token: `）。
         return {"X-CSRF-Token": self.csrf} if (write and self.csrf) else {}
 
-    def _get(self, path: str, params: dict = None, *, timeout: float = None) -> requests.Response:
+    def _get(
+        self, path: str, params: dict | None = None, *, timeout: float | None = None
+    ) -> requests.Response:
         return self.session.get(
             self._url(path),
             params=params,
@@ -317,7 +319,9 @@ class OpcClient:
             timeout=timeout or self.timeout,
         )
 
-    def _post(self, path: str, body: dict = None, *, timeout: float = None) -> requests.Response:
+    def _post(
+        self, path: str, body: dict | None = None, *, timeout: float | None = None
+    ) -> requests.Response:
         r = self.session.post(
             self._url(path),
             json=body,
@@ -400,7 +404,7 @@ class OpcClient:
         email: str,
         password: str,
         *,
-        account_type: str = None,
+        account_type: str | None = None,
         invite_code: str = "",
     ) -> RegisterResult:
         """`POST /api/auth/register`。
@@ -661,8 +665,8 @@ class OpcClient:
     def verify_key(
         api_key: str,
         *,
-        base: str = None,
-        timeout: float = None,
+        base: str | None = None,
+        timeout: float | None = None,
         attempts: int = 1,
         delay: float = 3.0,
     ) -> tuple:
@@ -741,7 +745,11 @@ class OpcClient:
 
     @staticmethod
     def probe_key(
-        api_key: str, *, model: str = "opc-txt-v1", base: str = None, timeout: float = None
+        api_key: str,
+        *,
+        model: str = "opc-txt-v1",
+        base: str | None = None,
+        timeout: float | None = None,
     ) -> tuple:
         """用 key 真发一次 `POST /v1/chat/completions`，返回 `(ok, 说明)`。
 
@@ -770,7 +778,7 @@ class OpcClient:
 _PW_PREFIX = "Lz#"
 
 
-def gen_password(length: int = None) -> str:
+def gen_password(length: int | None = None) -> str:
     """生成符合站点规则的密码。**保证**大小写字母 / 数字 / 符号三类齐全。
 
     🔴 必须**含字母**：实测纯数字 `12345678` 被服务端拒
@@ -796,12 +804,13 @@ def gen_password(length: int = None) -> str:
     return _PW_PREFIX + "".join(body)
 
 
-def find_activation_url(text: str, *, host: str = None) -> str | None:
+def find_activation_url(text: str, *, host: str | None = None) -> str | None:
     """从邮件正文里找出激活链接。
 
-    🔴 **这一步不能用 Worker 的 `extracted_json`** —— 实测它对本站的激活邮件
-      返回**空数组** `[]`（发件人是 `rockssr@163.com`，不是 Worker 熟悉的那几家）。
-      必须自己从 body 里正则捞。
+    ⚠ **这是回退路径**：日常请优先用 `activation_link_from_mail()`。共享 Worker
+      自 2026-09-26 起为本站激活邮件给出 `extracted_json`（D1 规则 id=21），
+      结构化字段不受 HTML 副本 / 折行 / 中文标点影响。本函数只在它为空时兜底
+      （存量邮件 / 规则被误删 / 站点换发信域名）。
 
     判据：URL 的 path 含 `activate`，且 host 匹配站点域名（防止把邮件里
     别的链接——比如退订、logo、社交账号——当激活链接）。
@@ -820,13 +829,44 @@ def find_activation_url(text: str, *, host: str = None) -> str | None:
     want_host = (host or urlparse(config.SITE_BASE).hostname or "").lower()
     for m in _URL_RE.finditer(text):
         url = m.group(0).rstrip(".,;:!?、。，；：！？）】」』\"'")
-        try:
-            p = urlparse(url)
-        except ValueError:
-            continue
-        if want_host and want_host not in (p.hostname or "").lower():
-            continue
-        if "activate" not in p.path.lower():
-            continue
-        return url
+        if _is_activation_url(url, want_host):
+            return url
     return None
+
+
+def _is_activation_url(url: str, want_host: str) -> bool:
+    """这条 URL 是不是本站激活链接：host 对得上 + path 含 `activate`。"""
+    try:
+        p = urlparse(url)
+    except ValueError:
+        return False
+    if want_host and want_host not in (p.hostname or "").lower():
+        return False
+    return "activate" in p.path.lower()
+
+
+def activation_link_from_mail(mail, *, host: str | None = None) -> str | None:
+    """从一封邮件取激活链接：**优先 Worker 的 `extracted_json`，退回正文正则**。
+
+    共享 Worker 自 2026-09-26 起有本站的激活链接规则（D1 `rules` id=21：
+    sender `^rockssr@163\\.com$`，pattern 抓 `https://opc.fiime.cn/activate?token=…`），
+    激活邮件因此带上 `extracted_json = [{"value": "...", "type": "link"}]`。
+
+    🔴 **优先结构化字段**：它由服务端在**收信时**一次性抽出，不受正文里
+      HTML 副本、跟踪链接、折行折叠、中文标点的影响（早期纯正文正则会把这些
+      吞进 token，见 `find_activation_url` 的说明）。
+
+    ⚠ **必须保留正文回退**：规则上线前的存量邮件、Worker 规则被误删、
+      站点换发信域名时，`extracted_json` 会是空的 —— 只有正文正则能兜住。
+      两者都失败才返回 `None`。
+    """
+    want_host = (host or urlparse(config.SITE_BASE).hostname or "").lower()
+    finder = getattr(mail, "find_link", None)
+    if callable(finder):
+        try:
+            url = finder()
+        except Exception:
+            url = None
+        if url and _is_activation_url(str(url), want_host):
+            return str(url)
+    return find_activation_url(getattr(mail, "body", "") or "", host=want_host)

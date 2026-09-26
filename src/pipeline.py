@@ -44,7 +44,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
 
-from . import config, opc, quota
+from . import config, ledger, opc, quota
 from .mailbox import make_source
 from .opc import OpcClient
 from .proxypool import NoEligibleSlot, build_pool
@@ -355,7 +355,7 @@ class AccountRecord:
     base_url: str = ""
     # key 校验是否**真的通过**（结构化布尔，不是靠 match stages 里那串文案）。
     # 三态：True=通过 / False=不通过 / None=没校验（`--no-verify`）。
-    key_verified: bool = None
+    key_verified: bool | None = None
     # 服务端上报的可用模型 id（19 个，含 text/image/video 三类）。
     # 落进台账是为了回答"这个 key 到底能调什么"，不用再登录一次去查。
     models: list = field(default_factory=list)
@@ -393,7 +393,7 @@ def _newest_activation_link(mail, email: str, since_ts: int, *, timeout: float, 
             ts = m.received_at or 0
             if ts <= since_ts:
                 continue
-            lk = opc.find_activation_url(m.body or "")
+            lk = opc.activation_link_from_mail(m)
             if lk and opc.OpcClient.token_from_activation_url(lk) and ts >= best_ts:
                 best_link, best_ts = lk, ts
         if best_link is not None or time.time() >= deadline:
@@ -494,11 +494,11 @@ def stage_register(
     client: OpcClient,
     rec: AccountRecord,
     *,
-    gate: _ScopeRateLimiter = None,
+    gate: _ScopeRateLimiter | None = None,
     quota_scope: str = "",
     should_stop=None,
-    mail_domain: str = None,
-    invite_code: str = None,
+    mail_domain: str | None = None,
+    invite_code: str | None = None,
     log=print,
 ) -> bool:
     """注册 + 激活。
@@ -663,9 +663,10 @@ def stage_register(
             return False
         sub["mail_subject"] = m.subject[:60]
 
-        # 🔴 必须自己从 body 里捞链接 —— Worker 的 `extracted_json` 对本站的
-        #    激活邮件返回空数组（发件人是 163 邮箱，不是它熟悉的那几家）。
-        link = opc.find_activation_url(m.body)
+        # 🔴 优先读 Worker 的 `extracted_json`（D1 规则 id=21，2026-09-26 起为本站
+        #    激活邮件给出 `type:"link"`），正文正则只做兜底 —— 结构化字段不受
+        #    HTML 副本 / 折行 / 中文标点影响。见 `opc.activation_link_from_mail`。
+        link = opc.activation_link_from_mail(m)
         if not link:
             rec.status = "failed"
             rec.error = (
@@ -748,7 +749,6 @@ def _register_with_retry(
       注册成功、激活成功、退出码 0，只有 `invitedAt=0` 孤零零地摆在那里。
       这正是本项目最忌讳的那类失败：**静默降级**。
     """
-    last = None
     for attempt in range(config.REG_RATE_RETRY + 1):
         last = client.register(rec.username, rec.email, rec.password, invite_code=invite_code)
         if last.ok:
@@ -763,7 +763,10 @@ def _register_with_retry(
             log(f"↻ 速率限流，退避后重试（{attempt + 1}/{config.REG_RATE_RETRY}）")
             continue
         return last
-    return last
+    # 不可达：`range(REG_RATE_RETRY + 1)` 至少跑一次，且每轮都以 `return` 收尾。
+    # 显式抛错而不是 `assert` —— `python -O` 会把 assert 整行剥掉，
+    # 那样函数就少了类型检查器能看见的出口。
+    raise RuntimeError("unreachable: config.REG_RATE_RETRY 必须 >= 0")
 
 
 # ────────────────────────────────────────────────────────────────
@@ -772,7 +775,7 @@ def _register_with_retry(
 def stage_login_key(
     rec: AccountRecord,
     *,
-    client: OpcClient = None,
+    client: OpcClient | None = None,
     key_name: str = "default",
     verify: bool = True,
     probe: bool = False,
@@ -912,12 +915,12 @@ def verify_keys(records: list, *, verbose: bool = True, log=print) -> None:
 def run_one(
     *,
     key_name: str = "default",
-    mail_domain: str = None,
-    proxy: str = None,
+    mail_domain: str | None = None,
+    proxy: str | None = None,
     verbose: bool = True,
     verify: bool = True,
     probe: bool = False,
-    invite_code: str = None,
+    invite_code: str | None = None,
 ) -> AccountRecord:
     """完整跑通一个账号。`proxy` 不传时用 `FO_PROXY`（没有就直连）。
 
@@ -983,13 +986,13 @@ def run_batch(
     count: int,
     workers: int = 4,
     key_name: str = "default",
-    mail_domain: str = None,
+    mail_domain: str | None = None,
     verbose: bool = True,
-    reg_concurrency: int = None,
+    reg_concurrency: int | None = None,
     ignore_quota: bool = False,
     verify: bool = True,
     probe: bool = False,
-    invite_code: str = None,
+    invite_code: str | None = None,
 ) -> list:
     """批量注册。注册阶段与登录阶段流水线并行。
 
@@ -1048,6 +1051,22 @@ def run_batch(
     q: queue.Queue = queue.Queue()
     print_lock = threading.Lock()
 
+    # 🔴 增量落盘：**每完成一个账号就追加一行**，而不是等收尾一次性写快照。
+    #    `run_batch` 原来把记录攒在内存，进程被杀（batch73）就整批丢失，
+    #    连密码都没留下 ⇒ `recover_keys.py` 也无从登录。有了日志，中途崩掉时
+    #    台账快照为空，但日志里有已完成的账号，可 `recover_keys.py --journal latest` 捞回。
+    #    收尾：`run.py` 在**快照写成功之后**调 `ledger.journal_finish()` 删除它。
+    journal = ledger.journal_begin()
+    print(
+        f"🧾 增量落盘日志：{journal.relative_to(ledger.ROOT)}（收尾成功后自动清理）",
+        flush=True,
+    )
+
+    def publish(idx: int, rec) -> None:
+        """记一行增量日志，再投递给消费者 —— 顺序不能反。"""
+        ledger.journal_append(rec)
+        q.put((idx, rec))
+
     def make_log(idx: int):
         prefix = f"[{idx + 1}/{count}]"
 
@@ -1094,10 +1113,13 @@ def run_batch(
                     probe=False,
                     log=make_log(idx),
                 )
+                # key 建出（或校验前）立刻落一行 —— 这是“已交付”的那条记录。
+                ledger.journal_append(rec)
             except Exception as ex:
                 rec.status = "failed"
                 rec.error = f"consumer: {str(ex)[:120]}"
                 rec.error_kind = ERR_KEY
+                ledger.journal_append(rec)
             finally:
                 q.task_done()
 
@@ -1124,7 +1146,7 @@ def run_batch(
             rec.error = "quota guard: 前序账号已确认 IP 配额触顶，跳过投递（未发请求）"
             rec.error_kind = ERR_QUOTA_GUARD
             log("跳过（配额保护）")
-            q.put((idx, rec))
+            publish(idx, rec)
             return
 
         ok = False
@@ -1189,7 +1211,9 @@ def run_batch(
         finally:
             settle_lease(pool, lease, ok, rec)
             gov.note_result(ok, rec)
-            q.put((idx, rec))
+            # 🔴 注册+激活一结束就落一行：即便消费者还没建 key，账号（含密码）
+            #    也已经可恢复 —— 这正是 batch73 缺失的那一环。
+            publish(idx, rec)
 
     t_start = time.time()
     with ThreadPoolExecutor(max_workers=reg_conc) as ex:

@@ -15,11 +15,11 @@ API（均需 `X-Admin-Token`；实测 `Authorization: Bearer` 也认，两个都
       整表每 4.6 小时被冲刷一遍 —— 我们的激活信一旦被挤出窗口就**永远读不到**。
       `/api/inbox` 按收件人索引查，**别人的邮件挤不掉我们的**。
 
-🔴 本站点的激活邮件**不能用 Worker 的 `extracted_json`** ——
-   实测（2026-09-26）发件人是 `rockssr@163.com`，Worker 的自动链接提取
-   返回**空数组** `[]`。所以 `Mail.links` 拿不到东西，必须由
-   `opc.find_activation_url()` 从 `body` 里正则捞。这是与参考项目最大的
-   行为差异（那边 Worker 能提出链接，本项目不能）。
+✅ 2026-09-26 起共享 Worker **能**为本站激活邮件抽出链接（D1 `rules` id=21，
+   sender `^rockssr@163\.com$`），`extracted_json = [{"value": "...", "type": "link"}]`。
+   取链接请用 `opc.activation_link_from_mail()`：**优先**本模块的
+   `Mail.find_link()`（结构化，不受正文折行 / 中文标点影响），
+   **为空时**回退 `opc.find_activation_url(body)`。
 """
 
 import json
@@ -30,6 +30,17 @@ from dataclasses import dataclass
 import requests
 
 from . import config
+
+
+def _as_int(value, default: int = 0) -> int:
+    """`value` → int；缺失/非法回落 `default`。
+
+    Worker 的字段是**外部输入**，一个非数字的 `received_at` 不该炸掉整条收信链。
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 @dataclass
@@ -46,9 +57,10 @@ class Mail:
     def links(self) -> list:
         """解析 Worker 已提取的链接列表。
 
-        ⚠ **本站点上这个列表基本是空的**（见模块 docstring）。留着是为了
-          兼容 Worker 哪天把提取修好，以及让参考项目那套调用方式仍能工作。
-          找激活链接请用 `opc.find_activation_url(mail.body)`。
+        ✅ 2026-09-26 起 Worker 会为本站激活邮件填入
+          `[{"value": "https://opc.fiime.cn/activate?token=…", "type": "link"}]`
+          （D1 `rules` id=21）。取激活链接请用
+          `opc.activation_link_from_mail(mail)` —— 优先本列表，空则回退正文正则。
         """
         try:
             items = json.loads(self.extracted_json or "[]")
@@ -73,7 +85,9 @@ class Mail:
 
 
 class TempMailClient:
-    def __init__(self, base: str = None, token: str = None, timeout: float = None):
+    def __init__(
+        self, base: str | None = None, token: str | None = None, timeout: float | None = None
+    ):
         self.base = (base or config.WORKER_BASE).rstrip("/")
         self.token = token or config.WORKER_ADMIN_TOKEN
         self.timeout = timeout or config.REQUEST_TIMEOUT
@@ -100,7 +114,7 @@ class TempMailClient:
         self.last_http_errors = 0
 
     # ── 邮箱管理 ──────────────────────────────────────────────
-    def create_mailbox(self, domain: str = None, count: int = 1) -> list:
+    def create_mailbox(self, domain: str | None = None, count: int = 1) -> list:
         r = self.session.post(
             f"{self.base}/api/mailboxes",
             json={"domain": domain or config.WORKER_DOMAIN, "count": count},
@@ -113,7 +127,7 @@ class TempMailClient:
         return data.get("emails", [])
 
     # ── 邮件读取 ──────────────────────────────────────────────
-    def list_mails(self, limit: int = None, email: str = None) -> list:
+    def list_mails(self, limit: int | None = None, email: str | None = None) -> list:
         """列邮件。
 
         `email` 给定 → 走 `/api/inbox?email=`（索引查，读 0~1 行）。
@@ -138,7 +152,7 @@ class TempMailClient:
                 subject=str(m.get("subject", "")),
                 body=str(m.get("body") or m.get("body_text") or ""),
                 extracted_json=str(m.get("extracted_json") or "[]"),
-                received_at=int(m.get("received_at") or 0),
+                received_at=_as_int(m.get("received_at")),
             )
             for m in raw
         ]
@@ -147,9 +161,9 @@ class TempMailClient:
         self,
         address: str,
         *,
-        sender_hint: str = None,
-        timeout: float = None,
-        interval: float = None,
+        sender_hint: str | None = None,
+        timeout: float | None = None,
+        interval: float | None = None,
         since_ts: int = 0,
     ) -> Mail | None:
         """轮询等待目标地址的邮件。
@@ -182,11 +196,13 @@ class TempMailClient:
                 mails = self.list_mails(email=address)
             except requests.HTTPError as ex:
                 code = ex.response.status_code if ex.response is not None else 0
-                if code and code < 500:
+                # 4xx = **我们**的问题（401 凭据错 / 404），立刻失败。
+                # 5xx / 没有响应对象（code==0）= 服务端现在读不出来 → 继续轮询。
+                if 400 <= code < 500:
                     raise
                 errs += 1
                 self.last_http_errors = errs
-                last_code = str(code or "?")
+                last_code = str(code) if code else "?"
                 time.sleep(min(interval * (1 + errs // 10), 2.0))
                 continue
             for m in mails:

@@ -22,6 +22,12 @@
   python tools/ops/recover_keys.py --apply            # 真写回台账
   python tools/ops/recover_keys.py --apply --refresh  # 连已有 key 的也重新拉一遍
   python tools/ops/recover_keys.py --email a@b.com --apply   # 只处理一个账号
+  python tools/ops/recover_keys.py --journal latest   # 从**未收尾的跑批日志**读账号
+
+🔴 `--journal`：`run_batch` 每完成一个账号就追加一行 JSONL（`ledger/runs/.../
+   journal-*.jsonl`）。正常收尾后会被删；**进程中途被杀**时它留在盘上，
+   里面是那批已注册账号（含密码）的**唯一副本** —— 没有它，那批 key 不可恢复
+   （batch73 就是这样丢的）。`--journal latest` = 取最新一份。
 
 🔴 **默认干跑**。写台账是不可逆的（护栏只能防"变少"，防不了"写错内容"），
    所以必须先看一遍要写什么。`--apply` 是显式动作。
@@ -44,14 +50,41 @@ def _load_read_source(path=None) -> tuple:
     return p, _ledger.load_existing(p)
 
 
+def _resolve_journal(spec: str) -> Path | None:
+    """把 `--journal` 的取值解析成一个存在的日志路径；`latest` = 最新一份。"""
+    if spec in ("", "latest", "-"):
+        js = _ledger.journal_paths()
+        return js[-1] if js else None
+    p = Path(spec)
+    return p if p.is_file() else None
+
+
+def _has_activated_account(rec: dict) -> bool:
+    """这条记录指的账号是否**已建好、可登录**。
+
+    台账里的最终记录用 `status == "success"`；而**增量日志**里“只走完注册+激活、
+    key 还没建”的那一行 `status` 仍是 `"init"`（`stage_login_key` 结尾才置 success）。
+    那种记录**同样能登录捞 key** —— 这正是 batch73 丢批后要用到的入口。
+    判据取结构化的 `stages["register"]/["activate"]`，**不搜 error 文本**。
+    """
+    if rec.get("status") == "success":
+        return True
+    stages = rec.get("stages") or {}
+    return (
+        rec.get("status") == "init"
+        and stages.get("register") == "ok"
+        and stages.get("activate") == "ok"
+    )
+
+
 def _needs_recovery(rec: dict, *, refresh: bool) -> bool:
     """这条记录要不要捞？
 
-    ⚠ `status` 必须是 `success` —— 注册都没成功（或没走到登录）的账号
-      根本不会有 key，去登录只会白跑并可能触发风控。
-      但 `success` 且 `api_key` 为空 = 典型的需要捞。
+    ⚠ 账号必须**已建好**（台账 success，或日志里注册+激活 ok）—— 注册都没成功
+      （或没走到激活）的账号根本登不进去，去登录只会白跑并可能触发风控。
+      已建好但 `api_key` 为空 = 典型的需要捞。
     """
-    if rec.get("status") != "success":
+    if not _has_activated_account(rec):
         return False
     if not (rec.get("email") and rec.get("password")):
         return False
@@ -78,9 +111,24 @@ def main() -> int:
         help="账号上有 key 但名字不匹配时，按这个名单选（默认 default）",
     )
     ap.add_argument("--ledger", help="指定台账读源（默认：最新全量快照）")
+    ap.add_argument(
+        "--journal",
+        nargs="?",
+        const="latest",
+        help="从未收尾的跑批日志（JSONL）读取记录；`latest` = 最新一份。"
+        "与 --ledger 读源合并后再处理 —— 用于捞回中途被杀那批的 key。",
+    )
     args = ap.parse_args()
 
     src, records = _load_read_source(args.ledger)
+    if args.journal:
+        jp = _resolve_journal(args.journal)
+        if jp is None:
+            print(f"✗ 找不到跑批日志：{args.journal}", file=sys.stderr)
+            return 1
+        jrecs = _ledger.journal_load(jp)
+        records, _kept, added, _up = _ledger.merge_records(records, jrecs)
+        print(f"跑批日志：{jp}（{len(jrecs)} 条，其中 {added} 条不在台账）")
     if not records:
         print(f"台账读源是空的（{src}）—— 没什么可捞的。")
         return _cli.EXIT_OK

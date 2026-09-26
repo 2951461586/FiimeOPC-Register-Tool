@@ -440,7 +440,7 @@ def slot_scope(url: str) -> str:
     )
 
 
-def proxies(raw: str = None) -> dict | None:
+def proxies(raw: str | None = None) -> dict | None:
     """代理串 → requests 的 `proxies` 字典；空则 None。
 
     解析交给 `normalize_proxy()`（支持 `host:port:user:pass` /
@@ -454,7 +454,7 @@ def proxies(raw: str = None) -> dict | None:
     return {"http": norm, "https": norm}
 
 
-def apply_proxy(session, proxy: str = None) -> None:
+def apply_proxy(session, proxy: str | None = None) -> None:
     """把代理挂到 `requests.Session`（未配置则什么都不做）。
 
     🔴 **必须同时关掉 `trust_env`** —— 否则环境变量会**静默盖掉**

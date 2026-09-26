@@ -214,9 +214,9 @@ class ProxySlotPool:
         self,
         slots: list,
         *,
-        cooldown: float = None,
-        cooldown_max: float = None,
-        egress_ips: dict = None,
+        cooldown: float | None = None,
+        cooldown_max: float | None = None,
+        egress_ips: dict | None = None,
         log=print,
         state_file=None,
     ):
@@ -357,7 +357,9 @@ class ProxySlotPool:
                 best, best_use = i, use
         return best
 
-    def acquire(self, *, timeout: float = None, accept=None, exclude: set = None) -> SlotLease:
+    def acquire(
+        self, *, timeout: float | None = None, accept=None, exclude: set | None = None
+    ) -> SlotLease:
         """拿一个槽位租约。
 
         `accept(slot) -> bool`：额外过滤（pipeline 用它筛掉"该出口配额已满"）。
@@ -380,8 +382,16 @@ class ProxySlotPool:
                         slot=slot, url=self.slots[slot], egress=self.egress.get(slot, "")
                     )
                 now = time.time()
-                if now >= deadline:
-                    raise self._no_slot_reason_locked(exclude, accept, now)
+                # 🔴 **快速失败**：`_no_slot_reason_locked` 判为 `NoEligibleSlot`
+                #    时立刻抛，别白等一整个 `PROXY_SLOT_TIMEOUT`（默认 240s）。
+                #    “空闲槽位全被 `accept` 否掉”（出口配额满）与“空闲槽位全在
+                #    配额封禁冷却中”都要**几小时**才可能变化 —— 等下去只会把一个
+                #    “无池可用”的批拖成 `ceil(count/并发) × 240s`（73 个账号≈52 分钟），
+                #    而且 `run.py` 那边看到的就是“卡住”。只有“槽位真在忙”
+                #    （返回 `TimeoutError`）才值得等到 deadline。
+                reason = self._no_slot_reason_locked(exclude, accept, now)
+                if isinstance(reason, NoEligibleSlot) or now >= deadline:
+                    raise reason
                 # 等到"最早一个冷却到期"或 0.5s，谁先到就谁 —— 避免空转。
                 self._cond.wait(timeout=max(0.05, min(0.5, deadline - now)))
 
@@ -487,7 +497,9 @@ class ProxySlotPool:
         return f"{self.size} 槽位 / 在外 {s['busy']} / 冷却 {s['cooling']} / {tail}"
 
 
-def build_pool(*, log=None, cooldown: float = None, preflight: bool = None) -> ProxySlotPool | None:
+def build_pool(
+    *, log=None, cooldown: float | None = None, preflight: bool | None = None
+) -> ProxySlotPool | None:
     """按配置建池。**没配槽位就返回 `None`**（调用方据此退回单代理/直连）。
 
     🔴 预检失败（一个槽位都连不上）时抛 `AllSlotsDead` —— 不静默退回，

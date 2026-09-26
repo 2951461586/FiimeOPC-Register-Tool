@@ -65,7 +65,7 @@ def _newest_link(mails: list) -> tuple:
     link, newest = None, 0
     for m in sorted(mails, key=lambda x: x.received_at or 0):
         newest = max(newest, m.received_at or 0)
-        lk = opc.find_activation_url(m.body or "")
+        lk = opc.activation_link_from_mail(m)
         if lk:
             link = lk
     return link, newest

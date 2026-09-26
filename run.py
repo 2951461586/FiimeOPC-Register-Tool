@@ -117,6 +117,26 @@ def _print_pool_summary() -> int:
     return total_left
 
 
+def _warn_orphan_journals() -> None:
+    """发现**没跑完的批**（增量日志没被收尾）就大声提示，并给出恢复命令。
+
+    日志是 `run_batch` 每完成一个账号追加的一行（JSONL）。正常收尾后由
+    本文件删除；若进程被杀，它就留在 `runs/` 下 —— 那是那批账号（含密码、
+    可能还有 key）的**唯一副本**，必须主动告诉用户，否则会一直躺着没人知道。
+    """
+    orphans = _ledger.journal_paths()
+    if not orphans:
+        return
+    newest = orphans[-1]
+    print(
+        f"⚠ 发现 {len(orphans)} 份**未收尾的跑批日志**（上次跑批中途被杀？）：\n"
+        f"    {newest.relative_to(_ledger.ROOT)}\n"
+        f"    里面的账号可能已注册、key 未落台账 —— 可零成本捞回（不消耗配额）：\n"
+        f"      python tools/ops/recover_keys.py --journal latest",
+        flush=True,
+    )
+
+
 def _cmd_probe() -> int:
     """`run.py probe` —— 只读探测，**不改动任何东西**。
 
@@ -230,6 +250,8 @@ def main() -> int:
 
     if args.cmd == "probe":
         return _cmd_probe()
+
+    _warn_orphan_journals()
 
     # 启动校验：缺凭据就立刻失败，别等跑了一半才发现全是 401。
     missing = config.validate()
@@ -384,7 +406,14 @@ def main() -> int:
     #     （= 最新那份全量快照），写全量快照 + 把**本批**刷进 latest.json。
     #   * `--out X` 显式给路径 → 老行为，只写 X、不落快照。
     out = Path(args.out) if args.out else None
-    new_records = [asdict(r) for r in results]
+    # 🔴 匿名跳过（`skipped` + 无 email）**不落盘**：它们连邮箱都没建，既不能
+    #    恢复、也不指向任何出口，只会让读源膨胀（实测 `--count 73` 灌进 53 条，
+    #    读源 36 → 109）。判据在 `ledger.is_persistable()`（唯一入口）——
+    #    邮箱创建失败（`failed` + 无 email）不是匿名跳过，必须保留。
+    new_records = [asdict(r) for r in results if _ledger.is_persistable(r)]
+    dropped = len(results) - len(new_records)
+    if dropped:
+        print(f"\n（{dropped} 条匿名跳过未落盘 —— 没建邮箱、没发请求，无信息量）")
     if args.overwrite:
         merged = new_records
         print(f"\n（--overwrite：只写本次 {len(merged)} 条，不合并历史）")
@@ -415,6 +444,13 @@ def main() -> int:
         # 宁可报错退出也不要静默丢掉账号。
         print(f"✗ {ex}", file=sys.stderr)
         return _cli.EXIT_NO_SHRINK
+
+    # ── 收尾增量日志 ─────────────────────────────────･
+    # 🔴 **必须**在快照写成功之后才删。快照才是正式交付物；若上面写盘失败
+    #    已经 `return`，这里就到不了 —— 崩溃批的唯一恢复来源得以保住。
+    ended = _ledger.journal_finish(remove=True)
+    if ended is not None and not args.quiet:
+        print(f"🧾 增量日志已收尾清理（{ended.name}）", flush=True)
 
     # 收尾报告整块在 `src/report.py`（测试链不该 import `run.py` —— 它会把
     # 整套 pipeline 拉进 sys.path）。依赖全部**注入**，报告层只依赖 stdlib。

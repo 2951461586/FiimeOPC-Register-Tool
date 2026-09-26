@@ -29,8 +29,11 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import threading
 import time
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
 
 from . import fsutil
@@ -49,6 +52,15 @@ LAST_RUN_NAME = "latest.json"
 #    `notes.json` / `results.json.bak` 落进去，按"最新"就会被当成台账读源 ——
 #    于是缩水护栏的分母、`--count` 的取样池全跟着变，而且**全程不报错**。
 SNAPSHOT_RE = re.compile(rf"^{SNAPSHOT_STEM}-(\d{{8}})-(\d{{6}})\.json$")
+
+# 增量落盘日志（**append-only JSONL**）的严格形状：
+#     journal-YYYYMMDD-HHMMSS-<pid>.jsonl
+# 🔴 带 pid：两个进程同时跑批时各自一份，不会互相追加/截断。
+# 🔴 扩展名是 `.jsonl`（**不是** `.json`）：它永远不该被 `SNAPSHOT_RE` 匹配，
+#    也永远不该成为台账读源 —— 读它是 `recover_keys.py --journal` 的事。
+JOURNAL_STEM = "journal"
+JOURNAL_SUFFIX = ".jsonl"
+JOURNAL_RE = re.compile(rf"^{JOURNAL_STEM}-(\d{{8}})-(\d{{6}})-(\d+)\.jsonl$")
 
 # 🔴 本站点的 API Key 前缀是 **`opc_sk_`**，不是参考项目的 `sk-`。
 #    抽成常量：覆盖统计与校验工具必须认同一套前缀，否则两边口径不一致
@@ -124,6 +136,30 @@ _EMPTY = (None, "", {}, [])
 
 def rank(rec: dict) -> int:
     return _RANK.get(str(rec.get("status") or ""), 0)
+
+
+def is_noop_skip(rec) -> bool:
+    """没有账号的“跳过”记录（`status=="skipped"` 且 `email` 为空）。
+
+    这类记录是**纯噪音**：出口配额全满时，生产者在一个请求都没发的情况下
+    把后续账号标成 `skipped`，**连邮箱都没建** —— 落盘后既不能恢复、也不
+    指向任何出口，只会让读源膨胀（实测一次 `--count 73` 灌进 53 条匿名
+    `skipped`，读源 36 → 109；batch73 复跑时踩到）。
+
+    🔴 判据必须是**两个条件的与**，不能只看 `email`：
+      邮箱创建失败（`status=="failed"`、`email` 也为空）是**有意义**的失败，
+      必须保留；只有“skipped + 无 email”才代表“根本没开始”，才丢。
+    """
+    if isinstance(rec, dict):
+        status, email = rec.get("status"), rec.get("email")
+    else:
+        status, email = getattr(rec, "status", ""), getattr(rec, "email", "")
+    return str(status or "") == "skipped" and not str(email or "").strip()
+
+
+def is_persistable(rec) -> bool:
+    """该记录是否值得落进台账（`False` = 匿名跳过，丢掉）。"""
+    return not is_noop_skip(rec)
 
 
 def load_existing(path) -> list:
@@ -402,3 +438,145 @@ def coverage_exit_code(missing, *, allow_partial: bool = False) -> int:
     if allow_partial or not missing:
         return 0
     return EXIT_COVERAGE_GAP
+
+
+# ── 增量落盘日志（journal）────────────────────────────────────────
+# 为什么需要它
+# ------------
+# `run_batch` 把本批记录攒在**内存**里，跑完才 `save_snapshot`。中途崩了
+# （Ctrl-C / 网络断 / 任务管理器结束进程），已经注册+建好的账号就**只存在于
+# 内存** —— 台账没有，日志里也没有密码 ⇒ `recover_keys.py` 也无从登录、
+# 无法把 key 捞回来。这正是 batch73 的事故（14 把 key 未落盘且不可恢复）。
+#
+# 所以每完成一个账号就往**追加式 JSONL** 里写一行。它是**checkpoint，
+# 不是读源**：
+#   * 正常收尾后由 `run.py` 删除（`journal_finish`）；
+#   * 若进程被杀，日志留在 `runs/` 下，`recover_keys.py --journal latest`
+#     可把里面的账号登录、把 key 捞回台账。
+#
+# 🔴 为什么是 append-only：追加对「单行 < PIPE_BUF」是原子且**没有读改写窗口**。
+#    若每次重写整份 JSON，写到一半被杀就会留下一份**语法不完整的文件** ——
+#    从"可恢复"退化成"彻底不可读"。
+
+# 🔴 名字必须与 `journal_begin/append/finish` 里用的完全一致（都是 `active_journal`）。
+#    曾写成 `_active_journal`，于是单账号模式（从不 `journal_begin`）调到
+#    `journal_finish` 直接 NameError —— 批量模式因为 begin 先把它建出来了才没暴露。
+_journal_lock = threading.Lock()
+active_journal: Path | None = None
+
+
+def journal_path(when=None, pid=None) -> Path:
+    """本次跑批日志的落点：`runs/<日期>/journal-<时间戳>-<pid>.jsonl`。"""
+    t = time.localtime() if when is None else time.localtime(when)
+    pid = os.getpid() if pid is None else pid
+    return (
+        LEDGER_DIR
+        / RUNS_DIRNAME
+        / time.strftime("%Y-%m-%d", t)
+        / f"{JOURNAL_STEM}-{time.strftime('%Y%m%d-%H%M%S', t)}-{pid}{JOURNAL_SUFFIX}"
+    )
+
+
+def _rec_to_dict(rec) -> dict:
+    """把 `AccountRecord`（dataclass）或 dict 统一成 dict。"""
+    if isinstance(rec, dict):
+        return rec
+    if is_dataclass(rec) and not isinstance(rec, type):
+        return asdict(rec)
+    raise TypeError(f"journal_append 只接受 dict / dataclass，收到 {type(rec).__name__}")
+
+
+def journal_begin(*, when=None, pid=None) -> Path:
+    """开一份新的跑批日志（截断同名旧文件），并把它设为**活动日志**。返回路径。"""
+    global active_journal
+    p = journal_path(when, pid)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("", encoding="utf-8")
+    with _journal_lock:
+        active_journal = p
+    return p
+
+
+def journal_append(rec) -> None:
+    """把一个账号的当前状态**追加**一行到活动日志（线程安全）。
+
+    `rec` 为 `None` / 没有活动日志时静默返回 —— journal 是加速器，
+    绝不能因为日志写不进去而让跑批失败（与 `quota._append_quiet` 同一原则）。
+    """
+    p = active_journal
+    if p is None or rec is None:
+        return
+    if not is_persistable(rec):
+        # 匿名跳过零信息量 —— 日志是给“崩掉的批”留恢复口子的，
+        # 没必要为一堆没开始过的账号占行。
+        return
+    try:
+        line = json.dumps(_rec_to_dict(rec), ensure_ascii=False)
+    except (TypeError, ValueError):
+        return
+    try:
+        # fsync：崩在"已打印成功、还没收尾"之间时，也要保证这行真的落了盘。
+        with _journal_lock, p.open("a", encoding="utf-8") as f:
+            f.write(line + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+    except OSError:
+        return
+
+
+def journal_finish(*, remove: bool = True) -> Path | None:
+    """收尾：清除活动日志指针，可选删除文件。返回被收尾的路径。
+
+    🔴 **只在快照写成功之后**调用（见 `run.py`）—— 否则会删掉还没落进台账的
+      唯一副本，把"可恢复"的崩溃重新变回"彻底丢失"。
+    """
+    global active_journal
+    with _journal_lock:
+        p = active_journal
+        active_journal = None
+        if p is not None and remove:
+            try:
+                p.unlink()
+            except OSError:
+                pass
+    return p
+
+
+def journal_paths() -> list:
+    """`runs/` 下所有命名合规的跑批日志（升序）。用于发现**没收尾的批**。"""
+    runs = LEDGER_DIR / RUNS_DIRNAME
+    if not runs.is_dir():
+        return []
+    found = [
+        p for p in runs.glob(f"*/{JOURNAL_STEM}-*{JOURNAL_SUFFIX}") if JOURNAL_RE.match(p.name)
+    ]
+    return sorted(found, key=lambda p: (p.parent.name, p.name))
+
+
+def journal_load(path) -> list:
+    """读跑批日志 → 按 `email` 归并（rank + 字段并集，后写者胜出）。
+
+    归并规则直接复用 `merge_records`：
+      * 同一账号的“注册完成”行与“key 建出”行**同级**，取并集 ⇒ key 不丢；
+      * 若后写的是一行失败（rank 低），它**不会**盖掉前面的成功行。
+    半截行（进程被杀）逐行跳过，不让它污染整个日志。
+    """
+    p = Path(path)
+    if not p.is_file():
+        return []
+    try:
+        text = p.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    acc: list = []
+    for raw in text.splitlines():
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            rec = json.loads(raw)
+        except ValueError:
+            continue
+        if isinstance(rec, dict):
+            acc, _, _, _ = merge_records(acc, [rec])
+    return acc

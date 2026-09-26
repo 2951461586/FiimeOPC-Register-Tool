@@ -5,7 +5,9 @@
 
 import json
 
-import pytest
+# pytest 在 pyproject 的 dev 依赖里（真实解释器可解析）；这里加 ignore 只是因为
+# pi-lens 的语言服务器用的是另一个不含 pytest 的解释器。
+import pytest  # type: ignore[import-not-found]
 
 from src import ledger
 
@@ -309,6 +311,159 @@ class TestApplyVerdicts:
         out, _ = ledger.apply_verdicts([rec], {"opc_sk_x": (False, "401（key 无效）")})
         assert not out[0]["key_verified"]
         assert out[0]["stages"]["verify"] == "401（key 无效）"
+
+
+# ── 增量落盘日志（journal）────────────────────────────────────────
+class TestJournal:
+    """🔴 对应 batch73 事故：`run_batch` 只在收尾落盘，中断即丢批。
+
+    日志是 append-only JSONL，每完成一个账号追加一行；正常收尾后由 `run.py`
+    删除，中途被杀则留在盘上供 `recover_keys.py --journal` 捞回。
+    """
+
+    @pytest.fixture(autouse=True)
+    def _isolate(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(ledger, "LEDGER_DIR", tmp_path / "ledger")
+        yield
+        ledger.journal_finish(remove=False)  # 清掉模块级活动指针，别串测试
+
+    def test_finish_without_begin_is_noop(self):
+        """🔴 单账号模式从不 `journal_begin` —— `journal_finish` 必须能空跑。
+
+        曾经模块级变量叫 `_active_journal` 而函数体读 `active_journal`：
+        批量模式因为 begin 先建了名字没暴露，单账号模式直接 NameError。
+        本用例必须排在**任何** begin 之前才拦得住（pytest 按定义顺序跑）。
+        """
+        assert ledger.journal_finish(remove=True) is None
+
+    def test_append_then_load_roundtrip(self):
+        p = ledger.journal_begin(when=0, pid=1234)
+        ledger.journal_append({"email": "a", "status": "init"})
+        out = ledger.journal_load(p)
+        assert len(out) == 1 and out[0]["email"] == "a"
+
+    def test_later_success_row_supersedes_init_row(self):
+        """后写的成功行 rank 更高 ⇒ 整体升级。
+
+        真实代码里两行是**同一个 `AccountRecord`**（消费者就地改 `rec.stages`），
+        所以成功行的 `stages` 是**累积**的（含 register）—— key 与早期阶段都在。
+        """
+        p = ledger.journal_begin(when=0, pid=1234)
+        ledger.journal_append({"email": "a", "status": "init", "stages": {"register": "ok"}})
+        ledger.journal_append(
+            {
+                "email": "a",
+                "status": "success",
+                "api_key": "opc_sk_1",
+                "stages": {"register": "ok", "activate": "ok", "key": "ok"},
+            }
+        )
+        out = ledger.journal_load(p)
+        assert len(out) == 1
+        assert out[0]["status"] == "success" and out[0]["api_key"] == "opc_sk_1"
+        assert out[0]["stages"]["register"] == "ok"  # 累积的早期阶段没丢
+
+    def test_same_rank_rows_union_top_level_fields(self):
+        """同级两行取**并集**：先到的 key 不会被后到的补充信息挤掉。"""
+        p = ledger.journal_begin(when=0, pid=1234)
+        ledger.journal_append({"email": "a", "status": "success", "api_key": "opc_sk_1"})
+        ledger.journal_append({"email": "a", "status": "success", "key_id": "msk_1"})
+        out = ledger.journal_load(p)
+        assert out[0]["api_key"] == "opc_sk_1" and out[0]["key_id"] == "msk_1"
+
+    def test_failure_row_does_not_clobber_success(self):
+        """后写的失败行 rank 低，不会盖掉前面的成功行。"""
+        p = ledger.journal_begin(when=0, pid=1234)
+        ledger.journal_append({"email": "a", "status": "success", "api_key": "opc_sk_1"})
+        ledger.journal_append({"email": "a", "status": "failed", "error": "boom"})
+        out = ledger.journal_load(p)
+        assert out[0]["status"] == "success" and out[0]["api_key"] == "opc_sk_1"
+
+    def test_corrupt_half_line_skipped(self):
+        """进程被杀留下的半截行不该污染整份日志。"""
+        p = ledger.journal_begin(when=0, pid=1234)
+        ledger.journal_append({"email": "a", "status": "init"})
+        with p.open("a", encoding="utf-8") as f:
+            f.write('{"email": "b", "stat')
+        out = ledger.journal_load(p)
+        assert [r["email"] for r in out] == ["a"]
+
+    def test_accepts_dataclass(self):
+        from dataclasses import dataclass
+
+        @dataclass
+        class R:
+            email: str = ""
+            status: str = "init"
+
+        p = ledger.journal_begin(when=0, pid=1234)
+        ledger.journal_append(R(email="a"))
+        assert ledger.journal_load(p)[0]["email"] == "a"
+
+    def test_finish_removes_file_and_clears_pointer(self):
+        p = ledger.journal_begin(when=0, pid=1234)
+        ledger.journal_append({"email": "a"})
+        assert p.is_file()
+        assert ledger.journal_finish(remove=True) == p
+        assert not p.is_file()
+        assert ledger.active_journal is None
+
+    def test_append_without_begin_is_noop(self):
+        ledger.journal_append({"email": "a"})  # 不抛异常
+
+    def test_paths_ignore_irregular_names(self):
+        jp = ledger.journal_begin(when=0, pid=1234)
+        d = jp.parent
+        (d / "journal-typo.jsonl").write_text("", encoding="utf-8")
+        (d / "results-20260926-000000.json").write_text("[]", encoding="utf-8")
+        assert ledger.journal_paths() == [jp]
+
+    def test_journal_is_never_a_snapshot(self):
+        """日志扩展名是 `.jsonl`，绝不进 `snapshot_paths()`（不能被当读源）。"""
+        ledger.journal_begin(when=0, pid=1234)
+        assert ledger.snapshot_paths() == []
+
+    def test_journal_skips_anonymous_skip(self):
+        """匿名跳过（无 email）不进日志；有 email 的记录照常进。"""
+        p = ledger.journal_begin(when=0, pid=1234)
+        ledger.journal_append({"status": "skipped", "email": ""})
+        ledger.journal_append({"status": "failed", "email": "a@b"})
+        assert [r["email"] for r in ledger.journal_load(p)] == ["a@b"]
+
+
+# ── 匿名跳过不落盘 ────────────────────────────────────────────────
+class TestNoopSkipFilter:
+    """🔴 一次 `--count 73` 把 53 条“无 email 的 skipped”灌进读源（36 → 109）。
+
+    匿名跳过零信息量（没建邮箱、没发请求），不该落盘。
+    """
+
+    def test_anonymous_skip_is_not_persistable(self):
+        assert ledger.is_noop_skip({"status": "skipped", "email": ""})
+        assert not ledger.is_persistable({"status": "skipped", "email": ""})
+
+    def test_skip_with_email_is_persistable(self):
+        """有 email 的跳过（已建邮箱、只是没发请求）保留。"""
+        assert ledger.is_persistable({"status": "skipped", "email": "a@b"})
+
+    def test_empty_email_failure_is_persistable(self):
+        """🔴 邮箱创建失败（email 空、status failed）必须保留 —— 那是有意义的失败。"""
+        assert not ledger.is_noop_skip({"status": "failed", "email": ""})
+        assert ledger.is_persistable({"status": "failed", "email": ""})
+
+    def test_success_is_persistable(self):
+        assert ledger.is_persistable({"status": "success", "email": "a@b"})
+
+    def test_accepts_dataclass(self):
+        from dataclasses import dataclass
+
+        @dataclass
+        class R:
+            status: str = ""
+            email: str = ""
+
+        assert not ledger.is_persistable(R(status="skipped", email=""))
+        assert ledger.is_persistable(R(status="success", email="a@b"))
 
 
 if __name__ == "__main__":

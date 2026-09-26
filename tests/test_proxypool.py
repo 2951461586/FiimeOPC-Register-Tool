@@ -7,6 +7,12 @@
 ⚠ 本文件的代理/主机名一律用保留示例域，真实住宅网关是基础设施标识。
 """
 
+import time as _time
+
+# pytest 在 pyproject 的 dev 依赖里（真实解释器可解析）；这里加 ignore 只是因为
+# pi-lens 的语言服务器用的是另一个不含 pytest 的解释器。
+import pytest  # type: ignore[import-not-found]
+
 from src import proxypool
 
 
@@ -58,3 +64,40 @@ def test_pool_egress_uses_session_scope(monkeypatch, tmp_path):
     ]
     pool = proxypool.ProxySlotPool(slots, log=lambda *a: None, state_file=tmp_path / "pool.json")
     assert pool.distinct_egress() == 2, "两个会话不能算成一个出口"
+
+
+# ── acquire 的快速失败（不白等 PROXY_SLOT_TIMEOUT）──────────────────
+def test_acquire_fails_fast_when_all_free_slots_rejected(monkeypatch, tmp_path):
+    """🔴 出口配额全满时必须**立刻**抛 `NoEligibleSlot`，不能白等 timeout。
+
+    没有这一条，一个“无池可用”的批会被拖成 `ceil(count/并发) × 240s`
+    （73 个账号 ≈ 52 分钟），而外层看到的就是“卡住”。
+    """
+    monkeypatch.setattr(proxypool.config, "SLOT_EGRESS_IPS", {})
+    monkeypatch.setattr(proxypool.config, "PROXY_SCOPE_MODE", "session")
+    slots = [
+        "res.example.com:2000:u-region-US-sid-AAA111-t-1:pw",
+        "res.example.com:2000:u-region-US-sid-BBB222-t-1:pw",
+    ]
+    pool = proxypool.ProxySlotPool(slots, log=lambda *a: None, state_file=tmp_path / "pool.json")
+    t0 = _time.time()
+    with pytest.raises(proxypool.NoEligibleSlot):
+        pool.acquire(timeout=30.0, accept=lambda i: False)
+    assert _time.time() - t0 < 5.0, "应当立刻失败，而不是等满 timeout"
+
+
+def test_acquire_waits_when_slots_are_busy(monkeypatch, tmp_path):
+    """所有槽位都在忙 ⇒ `TimeoutError`（等不到空闲），不是 `NoEligibleSlot`。"""
+    monkeypatch.setattr(proxypool.config, "SLOT_EGRESS_IPS", {})
+    monkeypatch.setattr(proxypool.config, "PROXY_SCOPE_MODE", "session")
+    pool = proxypool.ProxySlotPool(
+        ["res.example.com:2000:u-region-US-sid-AAA111-t-1:pw"],
+        log=lambda *a: None,
+        state_file=tmp_path / "pool.json",
+    )
+    lease = pool.acquire(timeout=1.0)
+    try:
+        with pytest.raises(TimeoutError):
+            pool.acquire(timeout=0.3)
+    finally:
+        pool.release(lease)
