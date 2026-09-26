@@ -99,14 +99,46 @@ def state_path() -> Path:
     return Path(__file__).resolve().parents[1] / ".workbuddy-ai" / "state" / "proxypool.json"
 
 
+def _num(v, default, cast):
+    """宽松数值转换：`None`/空/非数字一律回落 `default`。
+
+    🔴 状态文件是**加速器**，可能被手改、也可能残留旧版本写坏的字段；
+      解析失败不该让池子起不来，也不该把一个坏值当成有效冷却。
+    """
+    if v is None or v == "":
+        return default
+    try:
+        return cast(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def _now() -> int:
+    """当前 epoch 秒（整数）。用 `//` 避开热路径上的 `int()` 转换。"""
+    return time.time_ns() // 1_000_000_000
+
+
 def _state_key(url: str) -> str:
-    """状态文件里的键 = `host:port`（**不含 userinfo**）。
+    """状态文件里的键 —— 必须**每个独立出口唯一**、且**不含凭据**。
 
     🔴 不能拿整个 URL 当键：代理串可能是 `http://user:pass@host:port`，
       写进状态文件等于把账密落盘。而状态文件经常被贴出来排查。
+
+    🔴 住宅代理会把多个会话挤在**同一个 `host:port`** 上（靠 `sid-` 区分）。
+      按 `host:port` 当键会让它们**共用**一条冷却记录：一个会话触顶，
+      整个住宅池一起被晾 —— 正好把“每个会话独立出口”的核心价值抹掉。
+      所以 `session` 模式下键取 `slot_scope()`（= 会话标识）。
     """
+    scope = ""
+    if config.PROXY_SCOPE_MODE == "session":
+        try:
+            scope = config.slot_scope(url)
+        except ValueError:
+            scope = ""
+    if scope:
+        return scope
     try:
-        p = urlparse(url if "://" in url else f"http://{url}")
+        p = urlparse(config.normalize_proxy(url))
         return f"{p.hostname or '?'}:{p.port or 0}"
     except ValueError:
         return url
@@ -145,8 +177,11 @@ class AllSlotsDead(RuntimeError):
 
 
 def _host_port(url: str) -> tuple:
-    p = urlparse(url if "://" in url else f"http://{url}")
-    return p.hostname or "", int(p.port or 0)
+    # 🔴 先走 `config.normalize_proxy()`：住宅代理写的是 `host:port:user:pass`，
+    #    直接 urlparse 会把 `port:user:pass` 当成畸形端口（`.port` 抛 ValueError）
+    #    —— 而本函数的调用点（TCP 预检 / 池子建表）都不捕异常，一抛就是整批起不来。
+    p = urlparse(config.normalize_proxy(url))
+    return p.hostname or "", (p.port or 0)
 
 
 def check_slots_alive(slots: list, *, timeout: float = 0.5) -> dict:
@@ -192,12 +227,20 @@ class ProxySlotPool:
         self.log = log
         self.state_file = Path(state_file) if state_file else state_path()
 
-        # 端口 → 出口 IP。拿不到就留空（退回按槽位分配，见模块 docstring）。
+        # 端口 → 出口。映射优先；映射不到时（动态住宅）退到 `slot_scope()`，
+        # 它会按 `sid-` 给出**会话级** scope。两者都拿不到才留空
+        # （退回按槽位分配，见模块 docstring）。
         mapping = egress_ips if egress_ips is not None else config.SLOT_EGRESS_IPS
         self.egress = {}
         for i, url in enumerate(self.slots):
             port = str(_host_port(url)[1])
-            self.egress[i] = mapping.get(port, "")
+            scope = mapping.get(port, "")
+            if not scope:
+                try:
+                    scope = config.slot_scope(url)
+                except ValueError:
+                    scope = ""
+            self.egress[i] = scope
         self._egress_known = any(self.egress.values())
 
         self._lock = threading.Lock()
@@ -247,10 +290,10 @@ class ProxySlotPool:
             rec = by_key.get(_state_key(url))
             if not isinstance(rec, dict):
                 continue
-            until = float(rec.get("cooldown_until") or 0)
+            until = _num(rec.get("cooldown_until"), 0.0, float)
             if until > now:
                 self._cooldown_until[i] = until
-            n = int(rec.get("bans") or 0)
+            n = _num(rec.get("bans"), 0, int)
             if n:
                 self._bans[i] = n
         if self._cooldown_until:
@@ -265,11 +308,11 @@ class ProxySlotPool:
         理由：状态文件是**加速器**（记住退避进度），不是数据源。
         它写不成的代价只是"下次重跑退避从 120s 重来"，远小于让整批失败。
         """
-        payload = {"saved_at": int(time.time()), "slots": {}}
+        payload = {"saved_at": _now(), "slots": {}}
         for i, url in enumerate(self.slots):
             payload["slots"][_state_key(url)] = {
-                "cooldown_until": int(self._cooldown_until.get(i, 0)),
-                "bans": int(self._bans.get(i, 0)),
+                "cooldown_until": _num(self._cooldown_until.get(i, 0), 0, int),
+                "bans": _num(self._bans.get(i, 0), 0, int),
             }
         try:
             fsutil.atomic_write_text(
@@ -358,7 +401,7 @@ class ProxySlotPool:
         if cooling and all(self._bans.get(i, 0) > 0 for i in cooling):
             return NoEligibleSlot(
                 f"{len(cooling)} 个槽位全在**配额冷却**中"
-                f"（最近一次到期还需 {int(min(self._cooldown_until[i] for i in cooling) - now)}s）"
+                f"（最近一次到期还需 {min(self._cooldown_until[i] for i in cooling) - now:.0f}s）"
             )
         return TimeoutError(
             f"等待空闲槽位超时（{self.size} 个槽位，在外 {len(self._busy)}，冷却 {len(cooling)}）"
@@ -393,7 +436,7 @@ class ProxySlotPool:
             cool = min(self.cooldown * (2 ** (n - 1)), self.cooldown_max)
             self._cooldown_until[lease.slot] = time.time() + cool
             self._warn(
-                f"[pool] {lease} 判死（{reason or 'quota'}） → 冷却 {int(cool)}s（第 {n} 次）"
+                f"[pool] {lease} 判死（{reason or 'quota'}） → 冷却 {cool:.0f}s（第 {n} 次）"
             )
             self._release_locked(lease)
             self._save_state_locked()
@@ -409,7 +452,7 @@ class ProxySlotPool:
             return
         with self._cond:
             self._cooldown_until[lease.slot] = time.time() + cooldown
-            self._warn(f"[pool] {lease} 偶发失败（{reason[:60]}） → 冷却 {int(cooldown)}s")
+            self._warn(f"[pool] {lease} 偶发失败（{reason[:60]}） → 冷却 {cooldown:.0f}s")
             self._release_locked(lease)
 
     # ── 展示 ──────────────────────────────────────────────────

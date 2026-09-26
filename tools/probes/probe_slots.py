@@ -37,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import requests  # noqa: E402
 
 from src import cli, config, quota  # noqa: E402
+from src.redact import redact_url  # noqa: E402
 
 # 🔴 Windows GBK 控制台**重定向输出**时，下面这些 `✓`/`⚠` 会抛
 #    UnicodeEncodeError。统一切到 UTF-8 —— 实现见 src/cli.py，与其它入口共用一份。
@@ -86,7 +87,7 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.slots:
-        slots = [s.strip() for s in args.slots.split(",") if s.strip()]
+        slots = [config.normalize_proxy(s) for s in args.slots.split(",") if s.strip()]
     else:
         try:
             slots = config.proxy_slots()
@@ -105,7 +106,10 @@ def main() -> int:
         site = site_reachable(url) if ip else "-"
         rows.append((port, url, ip, site))
         mark = "✓" if ip else "✗"
-        print(f"  {mark} slot{i} {url:<26} 出口 {ip or '(取不到)':<16} 站点 {site}", flush=True)
+        print(
+            f"  {mark} slot{i} {redact_url(url):<26} 出口 {ip or '(取不到)':<16} 站点 {site}",
+            flush=True,
+        )
 
     good = [(p, u, ip, s) for p, u, ip, s in rows if ip]
     if not good:

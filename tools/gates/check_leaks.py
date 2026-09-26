@@ -117,30 +117,69 @@ def _read_env(path=None) -> dict:
     return out
 
 
+def _host_token(part: str) -> str:
+    """从一个代理/URL 片段里取"要拦的最小标识"（一般是 host）。
+
+    太短或命中允许值返回 `""`。
+    """
+    part = part.strip()
+    if not part:
+        return ""
+    # `7901=198.51.100.7` → 取等号右边
+    if "=" in part:
+        part = part.split("=", 1)[1].strip()
+    # 去掉 scheme（`https://x.y.z` → `x.y.z`）
+    part = re.sub(r"^[a-z][a-z0-9+.-]*://", "", part, flags=re.I)
+    # `user:pass@host:port` → 取 `@` 右边，否则会把**用户名**当成 host
+    if "@" in part:
+        part = part.rsplit("@", 1)[1]
+    part = part.split("/", 1)[0].split(":", 1)[0].strip()
+    if len(part) < 6 or part in ALLOWED_VALUES:
+        return ""
+    return part
+
+
+def _slots_file_tokens(env: dict) -> set:
+    """`FO_PROXY_SLOTS_FILE` 指向的文件里也是同一类标识（住宅网关 host）。
+
+    🔴 闸门只读 `.env` 的**值**，而槽位清单通常是**外置文件**；不读它的后果
+      是把住宅网关写进源码时闸门抓不到 —— 而它正是最该保护的标识之一。
+    """
+    raw = (env.get("FO_PROXY_SLOTS_FILE") or "").strip()
+    if not raw:
+        return set()
+    p = Path(raw)
+    if not p.is_absolute():
+        p = ROOT / p
+    try:
+        text = p.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return set()
+    toks = set()
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        for part in re.split(r"[,;\s]+", line):
+            t = _host_token(part)
+            if t:
+                toks.add(t)
+    return toks
+
+
 def _tokens_from_env(env: dict) -> set:
-    """把敏感变量的值拆成"要拦的最小片段"。
+    """把敏感变量（及其槽位清单文件）的值拆成"要拦的最小片段"。
 
     🔴 必须拆：`FO_SLOT_EGRESS_IPS=7901=203.0.113.11,7902=...` 整串去搜永远搜不到，
     因为源码里只会提到**其中一个** IP。所以要按分隔符拆开。
     """
     toks = set()
     for var in SENSITIVE_VARS:
-        raw = env.get(var) or ""
-        if not raw:
-            continue
-        for part in re.split(r"[,;\s]+", raw):
-            part = part.strip()
-            if not part:
-                continue
-            # `7901=198.51.100.7` → 取等号右边
-            if "=" in part:
-                part = part.split("=", 1)[1].strip()
-            # URL 形态取 host（`https://x.y.z` → `x.y.z`）
-            part = re.sub(r"^[a-z][a-z0-9+.-]*://", "", part, flags=re.I)
-            part = part.split("/", 1)[0].split(":", 1)[0].strip()
-            if len(part) < 6 or part in ALLOWED_VALUES:
-                continue
-            toks.add(part)
+        for part in re.split(r"[,;\s]+", env.get(var) or ""):
+            t = _host_token(part)
+            if t:
+                toks.add(t)
+    toks |= _slots_file_tokens(env)
     return toks
 
 

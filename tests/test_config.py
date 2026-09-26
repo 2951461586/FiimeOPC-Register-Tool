@@ -211,6 +211,7 @@ class TestValidate:
         monkeypatch.setattr(config, "IR_PROXY_SLOTS", "http://127.0.0.1:7901")
         monkeypatch.setattr(config, "IR_PROXY_SLOTS_FILE", "")
         monkeypatch.setattr(config, "SLOT_EGRESS_IPS", {})
+        monkeypatch.setattr(config, "PROXY_SCOPE_MODE", "egress")
         missing = config.validate()
         assert any("FO_SLOT_EGRESS_IPS" in m for m in missing)
 
@@ -222,6 +223,24 @@ class TestValidate:
         monkeypatch.setattr(config, "IR_PROXY_SLOTS_FILE", "")
         monkeypatch.setattr(config, "SLOT_EGRESS_IPS", {})
         assert config.validate() == []
+
+    def test_session_mode_does_not_require_egress_map(self, monkeypatch):
+        """🔴 动态住宅按**会话**记账，不需要端口→IP 映射表。"""
+        monkeypatch.setattr(config, "MAILBOX_KIND", "worker")
+        monkeypatch.setattr(config, "WORKER_ADMIN_TOKEN", "x")
+        monkeypatch.setattr(config, "IR_PROXY_SLOTS", "res.example.com:2000:u:p")
+        monkeypatch.setattr(config, "IR_PROXY_SLOTS_FILE", "")
+        monkeypatch.setattr(config, "SLOT_EGRESS_IPS", {})
+        monkeypatch.setattr(config, "PROXY_SCOPE_MODE", "session")
+        assert not any("FO_SLOT_EGRESS_IPS" in m for m in config.validate())
+
+    def test_unknown_scope_mode_is_reported(self, monkeypatch):
+        monkeypatch.setattr(config, "MAILBOX_KIND", "worker")
+        monkeypatch.setattr(config, "WORKER_ADMIN_TOKEN", "x")
+        monkeypatch.setattr(config, "IR_PROXY_SLOTS", "")
+        monkeypatch.setattr(config, "IR_PROXY_SLOTS_FILE", "")
+        monkeypatch.setattr(config, "PROXY_SCOPE_MODE", "bogus")
+        assert any("FO_PROXY_SCOPE_MODE" in m for m in config.validate())
 
 
 # ── slot_scope / proxy_slots ──────────────────────────────────────
@@ -237,6 +256,7 @@ class TestSlotScope:
         别的 IP 头上，于是某个 IP 偷偷超限、另一个被提前停掉，全程不报错。
         """
         monkeypatch.setattr(config, "SLOT_EGRESS_IPS", {"7901": "203.0.113.7"})
+        monkeypatch.setattr(config, "PROXY_SCOPE_MODE", "egress")
         with pytest.raises(ValueError) as ei:
             config.slot_scope("http://127.0.0.1:7999")
         msg = str(ei.value)
@@ -251,9 +271,75 @@ class TestSlotScope:
         端口换 IP 时旧记录跟着旧 IP 走，不需要迁移。
         """
         monkeypatch.setattr(config, "SLOT_EGRESS_IPS", {})
+        monkeypatch.setattr(config, "PROXY_SCOPE_MODE", "egress")
         with pytest.raises(ValueError) as ei:
             config.slot_scope("http://127.0.0.1:7999")
         assert "migrate_quota" not in str(ei.value)
+
+
+class TestNormalizeProxy:
+    """代理串规范化 —— 住宅代理写的是 `host:port:user:pass`。"""
+
+    def test_four_part_becomes_url(self):
+        raw = "res.example.com:2000:u-region-US-sid-AAA111-t-1:pw"
+        assert config.normalize_proxy(raw) == (
+            "http://u-region-US-sid-AAA111-t-1:pw@res.example.com:2000"
+        )
+
+    def test_scheme_url_passthrough(self):
+        u = "http://127.0.0.1:7901"
+        assert config.normalize_proxy(u) == u
+
+    def test_two_part_gets_scheme(self):
+        assert config.normalize_proxy("1.2.3.4:8080") == "http://1.2.3.4:8080"
+
+    def test_empty_stays_empty(self):
+        assert config.normalize_proxy("") == ""
+
+    def test_garbage_raises(self):
+        with pytest.raises(ValueError):
+            config.normalize_proxy("a:b:c")
+
+
+class TestSessionScope:
+    """🔴 动态住宅：同一 host:port 下每个 `sid-` 是**独立出口**。
+
+    按端口记账会把 10 个会话合成一个桶 —— 10 路并发被本地闸门串成 1 路，
+    且一个会话触顶会误判成全部触顶。所以 `session` 模式的 scope 取会话标识。
+    """
+
+    def test_same_host_port_sessions_get_distinct_scopes(self, monkeypatch):
+        monkeypatch.setattr(config, "SLOT_EGRESS_IPS", {})
+        monkeypatch.setattr(config, "PROXY_SCOPE_MODE", "session")
+        a = config.slot_scope("res.example.com:2000:u-region-US-sid-AAA111-t-1:pw")
+        b = config.slot_scope("res.example.com:2000:u-region-US-sid-BBB222-t-1:pw")
+        assert a != b, "同 host:port 的两个会话必须分到两个桶"
+        assert "sid-AAA111" in a and "sid-BBB222" in b
+
+    def test_scope_never_contains_password(self, monkeypatch):
+        monkeypatch.setattr(config, "SLOT_EGRESS_IPS", {})
+        monkeypatch.setattr(config, "PROXY_SCOPE_MODE", "session")
+        scope = config.slot_scope("res.example.com:2000:u-region-US-sid-AAA111-t-1:SUPERSECRET")
+        assert "SUPERSECRET" not in scope, "scope 会落盘，绝不能带密码"
+
+    def test_without_sid_uses_stable_hash(self, monkeypatch):
+        monkeypatch.setattr(config, "SLOT_EGRESS_IPS", {})
+        monkeypatch.setattr(config, "PROXY_SCOPE_MODE", "session")
+        u = "res.example.com:2000:plainuser:pw"
+        s1, s2 = config.slot_scope(u), config.slot_scope(u)
+        assert s1 == s2, "scope 必须稳定（否则每次记到新桶）"
+        assert "pw" not in s1
+
+    def test_egress_mode_still_refuses_unknown_port(self, monkeypatch):
+        monkeypatch.setattr(config, "SLOT_EGRESS_IPS", {})
+        monkeypatch.setattr(config, "PROXY_SCOPE_MODE", "egress")
+        with pytest.raises(ValueError):
+            config.slot_scope("res.example.com:2000:u-region-US-sid-AAA111-t-1:pw")
+
+    def test_mapped_port_wins_even_in_session_mode(self, monkeypatch):
+        monkeypatch.setattr(config, "SLOT_EGRESS_IPS", {"7901": "203.0.113.7"})
+        monkeypatch.setattr(config, "PROXY_SCOPE_MODE", "session")
+        assert config.slot_scope("http://127.0.0.1:7901") == "203.0.113.7"
 
 
 class TestProxySlots:
@@ -274,6 +360,16 @@ class TestProxySlots:
             "http://127.0.0.1:7902",
             "http://127.0.0.1:7903",
         ]
+
+    def test_normalizes_residential_form(self, monkeypatch):
+        """住宅代理写 `host:port:user:pass` —— 清单读出来必须是完整 URL。"""
+        monkeypatch.setattr(config, "IR_PROXY_SLOTS_FILE", "")
+        monkeypatch.setattr(
+            config,
+            "IR_PROXY_SLOTS",
+            "res.example.com:2000:u-region-US-sid-AAA111-t-1:pw",
+        )
+        assert config.proxy_slots() == ["http://u-region-US-sid-AAA111-t-1:pw@res.example.com:2000"]
 
     def test_missing_file_raises_not_silently_empty(self, monkeypatch, tmp_path):
         """🔴 指向的文件不存在 ⇒ 抛错，**不能**静默返回空。

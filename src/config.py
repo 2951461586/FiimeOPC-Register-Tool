@@ -11,8 +11,11 @@
 ════════════════════════════════════════════════════════════════════
 """
 
+import hashlib
 import os
+import re
 from pathlib import Path
+from urllib.parse import urlparse
 
 
 def _load_dotenv(path: Path) -> None:
@@ -87,7 +90,7 @@ MODEL_TYPE_TEXT = "text"
 # 每账号最多能建几把 API Key。
 # ⚠ 这**只是报告文案用的兜底值**（实测服务端 `maxApiKeysPerUser=5`）。
 #   权威值以 `ServiceInfo.max_keys_per_user` 为准 —— 站点改了这里不会自动跟。
-MAX_KEYS_PER_USER = int(os.getenv("FO_MAX_KEYS_PER_USER", "5"))
+MAX_KEYS_PER_USER = _env_num(os.getenv("FO_MAX_KEYS_PER_USER", ""), 5, int)
 
 
 # ── 邮箱源（可插拔）──────────────────────────────────────────────
@@ -108,8 +111,8 @@ WORKER_DOMAIN = os.getenv("FO_WORKER_DOMAIN", "")
 #    ⇒ 整表每 4.6 小时被冲刷一遍，我们的激活信一旦被挤出窗口就**永远读不到**。
 #    `/api/inbox` 按收件人索引查，别人的邮件挤不掉我们的。
 #    ⚠ 本项目的 Worker 实测 `/api/inbox` 正常工作（2026-09-26）。
-MAIL_POLL_INTERVAL = float(os.getenv("FO_MAIL_POLL_INTERVAL", "2.0") or 2.0)
-MAIL_POLL_TIMEOUT = float(os.getenv("FO_MAIL_POLL_TIMEOUT", "120") or 120)
+MAIL_POLL_INTERVAL = _env_num(os.getenv("FO_MAIL_POLL_INTERVAL", ""), 2.0, float)
+MAIL_POLL_TIMEOUT = _env_num(os.getenv("FO_MAIL_POLL_TIMEOUT", ""), 120.0, float)
 
 # 🔴 激活邮件的发件人域名。实测发件人是 `rockssr@163.com`（主题「激活你的
 #    FiimeOPC 账号」）。用来过滤邮件，避免把 Worker 里其它项目的信读错。
@@ -119,7 +122,7 @@ MAIL_SENDER_HINT = os.getenv("FO_MAIL_SENDER_HINT", "rockssr").strip()
 
 
 # ── 站点请求 ──────────────────────────────────────────────────────
-REQUEST_TIMEOUT = float(os.getenv("FO_REQUEST_TIMEOUT", "30") or 30)
+REQUEST_TIMEOUT = _env_num(os.getenv("FO_REQUEST_TIMEOUT", ""), 30.0, float)
 
 USER_AGENT = os.getenv(
     "FO_USER_AGENT",
@@ -153,13 +156,13 @@ IP_QUOTA_MARK = "已达上限"
 # 两次注册之间的最小间隔（秒）。站点要求 60s，这里取 62s 留余量。
 # ⚠ 这是**每个出口**各自的间隔，不是全局 —— 池化模式下 6 个出口
 #    可以各自 62s 一次，理论吞吐 6/62s ≈ 0.097 账号/秒。
-REG_MIN_INTERVAL = float(os.getenv("FO_REG_MIN_INTERVAL", "62") or 62)
+REG_MIN_INTERVAL = _env_num(os.getenv("FO_REG_MIN_INTERVAL", ""), 62.0, float)
 
 # 撞到速率限流后的退避重试次数与基数（秒）。
 # 🔴 必须重试：429 是"慢点再来"，不是"注册失败"。当失败处理会让整批假失败。
 #    实测 429 在 0.2s 内返回，服务端没有 Retry-After 头，只能自己退避。
-REG_RATE_RETRY = int(os.getenv("FO_REG_RATE_RETRY", "2") or 2)
-REG_RATE_BACKOFF = float(os.getenv("FO_REG_RATE_BACKOFF", "65") or 65)
+REG_RATE_RETRY = _env_num(os.getenv("FO_REG_RATE_RETRY", ""), 2, int)
+REG_RATE_BACKOFF = _env_num(os.getenv("FO_REG_RATE_BACKOFF", ""), 65.0, float)
 
 # 用户名/密码规则（实测）。
 #   用户名：前端做 `^[a-zA-Z0-9_]{3,20}$` 类校验；服务端对重复名返回
@@ -167,7 +170,7 @@ REG_RATE_BACKOFF = float(os.getenv("FO_REG_RATE_BACKOFF", "65") or 65)
 #   密码：实测弱密码 `12345678` → 400 {"error":"密码必须包含字母"}。
 #         所以生成器**必须**混字母。长度取 12。
 USERNAME_PREFIX = os.getenv("FO_USERNAME_PREFIX", "lz")
-PASSWORD_LEN = int(os.getenv("FO_PASSWORD_LEN", "12") or 12)
+PASSWORD_LEN = _env_num(os.getenv("FO_PASSWORD_LEN", ""), 12, int)
 
 # 账号类型（实测枚举，来自 Register chunk 的 `be` 数组）。
 # ⚠ 传枚举外的值会被服务端拒（实测 badtype → 400）。
@@ -209,7 +212,7 @@ INVITE_CODE_MAXLEN = 32
 INVITE_TOKENS_PER_INVITE = 100000000
 
 
-def normalize_invite_code(raw: str) -> str:
+def normalize_invite_code(raw: str | None) -> str:
     """规范化邀请码：去空白 + 转大写。空值返回空串（= 不使用邀请码）。
 
     🔴 **只做规范化 + 格式校验，不做存在性校验** —— 存在性服务端都不查
@@ -250,6 +253,20 @@ IR_PROXY_SLOTS_FILE = os.getenv("FO_PROXY_SLOTS_FILE", "").strip()
 
 # 单条全局代理（不配池子时的退路，行为与参考项目 `IR_PROXY` 一致）。
 PROXY = os.getenv("FO_PROXY", "").strip()
+
+# ── 记账维度：出口 IP（静态/本地 mihomo）还是会话（动态住宅）────────
+# 🔴 本项目**最容易配错**的一个开关：
+#   · `egress`（默认）—— 每个槽位是一个**本地固定出口**（mihomo 端口），
+#     端口 → 出口 IP 的映射写在 `FO_SLOT_EGRESS_IPS` 里，按 IP 记账。
+#   · `session` —— 动态住宅代理：所有槽位可能共用 `host:port`，靠用户名/密码里
+#     的 `sid-XXXX` 区分**会话**，每个会话是独立出口。此时**不再需要**
+#     `FO_SLOT_EGRESS_IPS`，记账维度退化成“会话标识”（`host:port:sid-XXXX`）。
+#
+#   🔴 为什么住宅不能按端口记：10 个会话都是 `:2000`，按端口会把它们合成
+#      一个桶 —— 于是“10 路并发”被本地闸门串成 1 路，而且一个会话触顶会
+#      误判成全部触顶（本地池子把 10 个一起冷却）。
+PROXY_SCOPE_MODE = os.getenv("FO_PROXY_SCOPE_MODE", "egress").strip().lower() or "egress"
+PROXY_SCOPE_MODES = ("egress", "session")
 
 # 槽位被判"这个出口的每日配额已满"后冷却多久（秒）。
 # ⚠ 每日配额是**当天**恢复的，所以冷却不该短于"跑到明天"。
@@ -299,6 +316,30 @@ def _parse_slot_egress(raw: str) -> dict:
 SLOT_EGRESS_IPS: dict = _parse_slot_egress(IR_SLOT_EGRESS_IPS)
 
 
+def normalize_proxy(raw: str) -> str:
+    """代理串 → `scheme://user:pass@host:port`；空串原样返回。
+
+    支持 `host:port:user:pass`、`scheme://user:pass@host:port`、`http://host:port`。
+
+    🔴 抽成**公开函数**，是因为槽位清单也要用它：住宅代理在清单里写的是
+      `host:port:user:pass`，不规范化的话 `slot_scope()` 的
+      `url.rsplit(":", 1)[-1]` 会把**密码**当成端口，`_host_port()` 更是直接
+      解析失败 —— 而且这两种错都**不报错**，只是把额度记到不存在的地方。
+    """
+    raw = (raw or "").strip()
+    if not raw or "://" in raw:
+        return raw
+    parts = raw.split(":")
+    if len(parts) == 4:
+        host, port, user, pwd = parts
+        return f"http://{user}:{pwd}@{host}:{port}"
+    if len(parts) == 2:
+        return f"http://{raw}"
+    raise ValueError(
+        f"代理串格式无法识别：{raw!r}（期望 host:port:user:pass 或 scheme://user:pass@host:port）"
+    )
+
+
 def proxy_slots() -> list[str]:
     """读槽位清单。没配置就返回空列表（调用方据此退回单代理/直连）。
 
@@ -316,8 +357,33 @@ def proxy_slots() -> list[str]:
     for line in raw.replace("\n", ",").split(","):
         item = line.strip()
         if item and not item.startswith("#"):
-            out.append(item)
+            out.append(normalize_proxy(item))
     return out
+
+
+# 住宅代理用户名里常见 `...-sid-<token>-...` 的会话标识。
+_SID_RE = re.compile(r"sid[-_]([A-Za-z0-9]+)", re.I)
+
+
+def _session_scope(url: str) -> str:
+    """动态住宅代理 → 记账 scope = **会话标识**。
+
+    同一 `host:port` 下每个 `sid-XXXX` 是一个独立出口，所以 scope 取
+    `host:port:sid-XXXX`；没有 sid 时用 userinfo 的稳定哈希兜底。
+
+    🔴 **绝不把密码写进 scope** —— scope 会落进配额 JSONL 与池子状态文件，
+      而这两个文件经常被贴出来排查。
+    """
+    try:
+        p = urlparse(normalize_proxy(url))
+    except ValueError:
+        return url
+    blob = f"{p.username or ''}:{p.password or ''}"
+    m = _SID_RE.search(blob)
+    if m:
+        return f"{p.hostname or '?'}:{p.port or 0}:sid-{m.group(1)}"
+    h = hashlib.sha256(blob.encode("utf-8")).hexdigest()[:8]
+    return f"{p.hostname or '?'}:{p.port or 0}:{h}"
 
 
 def slot_scope(url: str) -> str:
@@ -331,48 +397,46 @@ def slot_scope(url: str) -> str:
     🔴 端口不在映射表里时**大声报错，不退回位置号**：
       静默错配比"跑不起来、逼你去补映射"危险得多。
 
-    ⚠ 这里**不需要**"迁移配额记录"这类工具：记录是按**出口 IP** 记的，
-      端口换成别的 IP 时，旧 IP 的记录跟着旧 IP 走（既不丢也不串），
-      新 IP 从 0 开始。只有"按槽位号记账"才需要迁移 —— 那正是本函数
-      拒绝做的事。（早期报错文案里引用过一个 `migrate_quota_scope.py`，
-      那个工具**本来就不该存在**，已删除引用。）
+    ⚠ 这里**不需要**"迁移配额记录"这类工具：记录是按**出口**记的，
+      出口换了，旧记录跟着旧出口走（既不丢也不串），新出口从 0 开始。
+      只有"按槽位号记账"才需要迁移 —— 那正是本函数拒绝做的事。
+      早期报错文案里引用过一个 `migrate_quota_scope.py`，那个工具
+      **本来就不该存在**，已删除引用。
+
+    两种模式（`FO_PROXY_SCOPE_MODE`）：
+      · `egress`（默认）—— scope = `FO_SLOT_EGRESS_IPS` 里该端口的出口 IP。
+      · `session` —— 动态住宅：端口通常全部相同，scope = 会话标识
+        （`_session_scope`），此时不需要 `FO_SLOT_EGRESS_IPS`。
     """
-    port = url.rsplit(":", 1)[-1].strip()
+    norm = normalize_proxy(url)
+    port = norm.rsplit(":", 1)[-1].strip()
     ip = SLOT_EGRESS_IPS.get(port)
-    if not ip:
-        raise ValueError(
-            f"槽位 {url} 的出口 IP 未知（端口 {port} 不在 SLOT_EGRESS_IPS 里）。\n"
-            f"  1) 先量出真实出口 IP： python tools/probes/probe_slots.py\n"
-            f"  2) 写进 .env（**不要写进源码**）：\n"
-            f"       FO_SLOT_EGRESS_IPS={port}=<那个槽位的出口 IP>\n"
-            f"     多个槽位用逗号分隔：7901=1.1.1.1,7902=2.2.2.2"
-        )
-    return ip
+    if ip:
+        return ip
+    if PROXY_SCOPE_MODE == "session":
+        return _session_scope(norm)
+    raise ValueError(
+        f"槽位 {norm} 的出口 IP 未知（端口 {port} 不在 SLOT_EGRESS_IPS 里）。\n"
+        f"  1) 先量出真实出口 IP： python tools/probes/probe_slots.py\n"
+        f"  2) 写进 .env（**不要写进源码**）：\n"
+        f"       FO_SLOT_EGRESS_IPS={port}=<那个槽位的出口 IP>\n"
+        f"     多个槽位用逗号分隔：7901=1.1.1.1,7902=2.2.2.2\n"
+        f"  （动态住宅代理请设 FO_PROXY_SCOPE_MODE=session）"
+    )
 
 
 def proxies(raw: str = None) -> dict | None:
     """代理串 → requests 的 `proxies` 字典；空则 None。
 
-    支持 `host:port:user:pass`、`scheme://user:pass@host:port`、`http://host:port`。
+    解析交给 `normalize_proxy()`（支持 `host:port:user:pass` /
+    `scheme://user:pass@host:port` / `http://host:port`）。
     `raw` 传 None 时用全局 `FO_PROXY`；**传具体值时不碰全局状态** ——
     槽位池并发场景必须这样用，否则多线程改全局会互相踩。
     """
-    raw = (PROXY if raw is None else raw).strip()
-    if not raw:
+    norm = normalize_proxy(PROXY if raw is None else raw)
+    if not norm:
         return None
-    if "://" not in raw:
-        parts = raw.split(":")
-        if len(parts) == 4:
-            host, port, user, pwd = parts
-            raw = f"http://{user}:{pwd}@{host}:{port}"
-        elif len(parts) == 2:
-            raw = f"http://{raw}"
-        else:
-            raise ValueError(
-                f"代理串格式无法识别：{raw!r}"
-                f"（期望 host:port:user:pass 或 scheme://user:pass@host:port）"
-            )
-    return {"http": raw, "https": raw}
+    return {"http": norm, "https": norm}
 
 
 def apply_proxy(session, proxy: str = None) -> None:
@@ -423,10 +487,16 @@ def validate(*, need_worker_token: bool = True) -> list[str]:
     except (ValueError, OSError):
         missing.append(f"FO_PROXY_SLOTS_FILE（指向的文件读不到：{IR_PROXY_SLOTS_FILE}）")
         has_slots = False
-    if has_slots and not SLOT_EGRESS_IPS:
+    if PROXY_SCOPE_MODE not in PROXY_SCOPE_MODES:
+        missing.append(
+            f"FO_PROXY_SCOPE_MODE（未知取值 {PROXY_SCOPE_MODE!r}，"
+            f"只认 {' / '.join(PROXY_SCOPE_MODES)}）"
+        )
+    if has_slots and not SLOT_EGRESS_IPS and PROXY_SCOPE_MODE != "session":
         missing.append(
             "FO_SLOT_EGRESS_IPS（已配槽位池但缺「端口=出口IP」映射；"
-            "先跑 python tools/probes/probe_slots.py 量出来）"
+            "先跑 python tools/probes/probe_slots.py 量出来；"
+            "动态住宅代理则设 FO_PROXY_SCOPE_MODE=session）"
         )
 
     # 邀请码：只校验**格式**，不校验存在性（服务端自己都不查）。
