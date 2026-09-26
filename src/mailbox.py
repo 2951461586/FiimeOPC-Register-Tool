@@ -49,6 +49,10 @@ class MailboxSource(Protocol):
 
     def wait_for_mail(self, address: str, **kw) -> Mail | None: ...
 
+    def list_mails(self, email: str) -> list:
+        """列出该收件人的邮件（**运维工具**用它取「最新一封」；pipeline 不用）。"""
+        ...
+
 
 class WorkerMailbox:
     """CF Worker 实现 —— 包住 `TempMailClient`，**纯转发、行为零变化**。
@@ -79,6 +83,9 @@ class WorkerMailbox:
 
     def wait_for_mail(self, address: str, **kw) -> Mail | None:
         return self.client.wait_for_mail(address, **kw)
+
+    def list_mails(self, email: str) -> list:
+        return self.client.list_mails(email=email)
 
 
 def make_source(kind: str = None) -> MailboxSource:

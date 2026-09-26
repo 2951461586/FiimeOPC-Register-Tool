@@ -194,6 +194,14 @@ class ActivateResult:
 
 
 @dataclass
+class ResendResult:
+    ok: bool = False
+    message: str = ""
+    error: str = ""
+    http_status: int = 0
+
+
+@dataclass
 class LoginResult:
     ok: bool = False
     user: dict = field(default_factory=dict)
@@ -275,7 +283,7 @@ class OpcClient:
     改全局 `config.PROXY` 在多个 producer 之间会互相踩）。
     """
 
-    def __init__(self, *, proxy: str = None, timeout: float = None, log=print):
+    def __init__(self, *, proxy: str | None = None, timeout: float | None = None, log=print):
         self.timeout = timeout or config.REQUEST_TIMEOUT
         self.log = log
         self.proxy = proxy
@@ -477,6 +485,28 @@ class OpcClient:
         if not token:
             return ActivateResult(error=f"激活链接里没有 token：{url[:120]}")
         return self.activate(token)
+
+    def resend_activation(self, email: str) -> ResendResult:
+        """`POST /api/auth/resend-activation` —— 重发激活邮件。
+
+        实测响应：`200 {"message": "若该邮箱存在未激活账号，激活邮件已发送"}`
+        （无论邮箱是否存在都回同一句，防用户枚举）。
+
+        🔴 **每次重发都会作废上一个激活 token** —— 重发后必须用**最新**那封
+          邮件里的链接。实测拿旧 token 去激活会
+          `400 {"error":"激活链接无效或已使用"}`。
+        """
+        r = self._post("/auth/resend-activation", {"email": email})
+        res = ResendResult(http_status=r.status_code)
+        if r.ok:
+            res.ok = True
+            try:
+                res.message = str((r.json() or {}).get("message") or "")
+            except ValueError:
+                res.message = ""
+        else:
+            res.error = self._err_of(r)
+        return res
 
     # ── 登录 ──────────────────────────────────────────────────
     def login(self, account: str, password: str) -> LoginResult:

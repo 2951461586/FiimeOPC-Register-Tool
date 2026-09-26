@@ -366,6 +366,73 @@ class AccountRecord:
         return json.dumps(asdict(self), ensure_ascii=False, indent=2)
 
 
+def activate_with_resend(
+    mail,
+    client: OpcClient,
+    email: str,
+    link: str | None,
+    *,
+    since_ts: int = 0,
+    log=print,
+) -> tuple:
+    """激活账号；链接坏了 / 激活被拒就**重发激活邮件 + 用最新一封重试一次**。
+
+    返回 `(opc.ActivateResult, resent: bool)`。
+
+    🔴 为什么需要：站点偶发把激活邮件里的链接发坏（实测 2/10：既漏 `=`
+      —— `.../activate?token<hex>`，token 还被截成 62 位）。直接激活必然
+      400，白掉一个**已经注册成功**的账号。`POST /api/auth/resend-activation`
+      会发一封格式正确的新邮件（首次主题「激活你的…」，重发「请激活你的…」，
+      正文是 `?token=<64hex>`）。
+
+    🔴 **重发会作废上一个 token** —— 所以 `since_ts` 必须指到"旧邮件之后"，
+      否则会再次拿到旧链接（实测：拿旧 token 激活 → `400 无效或已使用`）。
+
+    `link` 传 `None` 表示当前没有可用链接，直接走重发。
+    """
+    act = None
+    if link:
+        tok = opc.OpcClient.token_from_activation_url(link)
+        act = (
+            client.activate(tok)
+            if tok
+            else opc.ActivateResult(error="激活链接里没有 token", http_status=400)
+        )
+        # 只有"链接 / token 被拒"（400）才值得重发；网络类失败重发没用。
+        if act.ok or act.http_status != 400:
+            return act, False
+        log(f"↻ 激活被拒（{act.error[:40]}）→ 重发激活邮件后重试")
+    else:
+        log("↻ 无可用激活链接 → 重发激活邮件")
+
+    try:
+        rs = client.resend_activation(email)
+    except Exception as ex:
+        log(f"重发失败：{type(ex).__name__}: {ex}")
+        if act is None:
+            act = opc.ActivateResult(error=f"resend: {ex}")
+        return act, False
+    if not rs.ok:
+        log(f"重发被拒：{rs.error or rs.http_status}")
+        return act or opc.ActivateResult(
+            error=f"resend: {rs.error}", http_status=rs.http_status
+        ), False
+
+    m2 = mail.wait_for_mail(email, since_ts=since_ts)
+    if not m2:
+        log("重发后没等到新邮件")
+        # ⚠ 用 `is None` 判断，不能写 `act or …` —— dataclass 实例恒为真值，
+        #    `or` 永远选中 `act`，新错误根本返回不出去。
+        return opc.ActivateResult(error="resend 后未收到新邮件", http_status=400), True
+    link2 = opc.find_activation_url(m2.body)
+    tok2 = opc.OpcClient.token_from_activation_url(link2) if link2 else ""
+    if not tok2:
+        return opc.ActivateResult(
+            error=f"重发后链接仍无 token（{len(m2.body)}B）", http_status=400
+        ), True
+    return client.activate(tok2), True
+
+
 # ────────────────────────────────────────────────────────────────
 # Stage 1+2：建邮箱 → 注册 → 收信激活（纯 HTTP，**消耗 IP 配额**）
 # ────────────────────────────────────────────────────────────────
@@ -555,12 +622,20 @@ def stage_register(
             rec.timings["register"] = round((time.time() - t0) * 1000)
             rec.timings["register_detail"] = sub
             return False
-        sub["activation_token"] = opc.OpcClient.token_from_activation_url(link)[:8] + "…"
-
-        # ── 6. 激活 ───────────────────────────────────────────
+        # ── 6. 激活（链接坏了会**重发 + 用最新邮件重试一次**）────
         t = time.time()
-        act = client.activate_from_url(link)
+        sub["activation_token"] = opc.OpcClient.token_from_activation_url(link)[:8] + "…"
+        act, resent = activate_with_resend(
+            mail,
+            client,
+            rec.email,
+            link,
+            since_ts=(getattr(m, "received_at", 0) or 0) + 1,
+            log=log,
+        )
         mark("activate_call", t)
+        if resent:
+            sub["activate_resent"] = True
         if not act.ok:
             rec.status = "failed"
             rec.error = f"activate: {act.error}"

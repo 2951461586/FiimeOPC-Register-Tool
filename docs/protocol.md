@@ -191,6 +191,33 @@ inviteCode: n.inviteCode || void 0, website})`。
 所以这个响应的 `user.invitedAt` 也是"推荐关系是否成立"的判据之一 ——
 本工具在注册和激活两处都取，取到非零就留下。
 
+### `POST /api/auth/resend-activation`
+
+重发激活邮件。**站点 UI 没显式暴露**，实测存在。
+
+```json
+// 请求体
+{"email": "oai-xxxx@example-mail.test"}
+
+// 200（无论该邮箱是否存在，都回同一句 —— 防用户枚举）
+{"message": "若该邮箱存在未激活账号，激活邮件已发送"}
+```
+
+🔴 **每次重发都会作废上一个激活 token** —— 重发后必须用**最新**那封邮件里的
+链接。实测拿旧 token 去激活会 `400 {"error":"激活链接无效或已使用"}`。
+
+⚠ 重发邮件与首次邮件**主题不同**：首次「激活你的 FiimeOPC 账号」，
+重发「请激活你的 FiimeOPC 账号」；正文链接形态一致（`?token=<64hex>`，
+同一链接出现 4 次）。
+
+🔴 **实测站点缺陷：偶发坏链接**（2026-09-26 一批 10 个账号里 2 个）。
+首次激活邮件里的链接是 `.../activate?token<62hex>` —— **既漏了 `=`，token 还被
+截成 62 位**（正常是 `=` + 64hex）。这类链接激活必然 400，账号已注册却卡死。
+处理：
+- `src/pipeline.activate_with_resend()`：激活被 400 时自动「重发 → 取最新邮件 →
+  重试一次」，批量会自愈；
+- `tools/ops/recover_activation.py`：事后捞回（默认干跑，`--apply` 写回台账）。
+
 ---
 
 ## 3. 登录与 API Key
