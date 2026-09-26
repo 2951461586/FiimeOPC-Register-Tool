@@ -70,7 +70,7 @@ class TestArgHelpers:
         cli.add_key_name_arg(ap)
         act = next(a for a in ap._actions if a.dest == "key_name")
         assert act.default == "default"
-        assert "5" in act.help, "help 里要提醒每账号上限（实测 maxApiKeysPerUser=5）"
+        assert "5" in (act.help or ""), "help 里要提醒每账号上限（实测 maxApiKeysPerUser=5）"
 
     def test_key_name_custom_default(self):
         ap = self._parser()
@@ -98,6 +98,46 @@ class TestMergeSummaryLine:
     def test_upgrade_clause_only_when_nonzero(self):
         assert "已更新" not in cli.merge_summary_line(1, 1, 0, 2)
         assert "3 条已更新" in cli.merge_summary_line(1, 1, 3, 5)
+
+
+class TestUtf8Stdio:
+    """🔴 Windows GBK 控制台在**重定向输出**时，会因 `✓`/`⚠` 抛
+    `UnicodeEncodeError`（真机控制台反而没事）—— 修法是把 stdio 切到 UTF-8。
+
+    这里钉的不是“真能改编码”（那依赖运行环境），而是**切换是尽力而为、
+    绝不反射性地把进程搞掉**。
+    """
+
+    def test_reconfigures_streams_to_utf8(self):
+        calls = []
+
+        class _Stream:
+            def reconfigure(self, **kw):
+                calls.append(kw)
+
+        cli.force_utf8_stdio(streams=[_Stream()])
+        assert calls == [{"encoding": "utf-8", "errors": "replace"}]
+
+    def test_skips_streams_without_reconfigure(self):
+        """pytest 捕获 / `pythonw`（`stdout is None`）都不支持 reconfigure。"""
+
+        class _Plain:
+            pass
+
+        cli.force_utf8_stdio(streams=[_Plain(), None])   # 不抛即可
+
+    def test_swallows_reconfigure_errors(self):
+        """流已关闭时 reconfigure 会抛 —— 不能因此让命令起不来。"""
+
+        class _Boom:
+            def reconfigure(self, **kw):
+                raise ValueError("I/O operation on closed file")
+
+        cli.force_utf8_stdio(streams=[_Boom()])          # 不抛即可
+
+    def test_is_wired_on_import(self):
+        """函数必须在**导入时**就被调用（五个入口都只 import 本模块）。"""
+        assert callable(cli.force_utf8_stdio)
 
 
 if __name__ == "__main__":

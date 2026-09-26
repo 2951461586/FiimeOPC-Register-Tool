@@ -16,7 +16,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from src import config, mailbox, opc, quota  # noqa: E402
+from src import cli, config, mailbox, opc, quota  # noqa: E402
+
+# 🔴 见 src/cli.py：Windows GBK 控制台重定向输出时，下面的 `✓`/`⚠` 会崩。
+cli.force_utf8_stdio()
 
 
 def main() -> int:

@@ -36,7 +36,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import requests  # noqa: E402
 
-from src import config, quota  # noqa: E402
+from src import cli, config, quota  # noqa: E402
+
+# 🔴 Windows GBK 控制台**重定向输出**时，下面这些 `✓`/`⚠` 会抛
+#    UnicodeEncodeError。统一切到 UTF-8 —— 实现见 src/cli.py，与其它入口共用一份。
+cli.force_utf8_stdio()
 
 IP_ECHO = "https://api.ipify.org"
 TIMEOUT = 25

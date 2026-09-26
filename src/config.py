@@ -40,6 +40,25 @@ def _load_dotenv(path: Path) -> None:
 
 _load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
+
+def _env_num(raw: str, default, cast):
+    """环境变量的数字转换；缺失/非法一律回落 `default`。
+
+    🔴 不能直接 `float(os.getenv(...))`：环境变量是人手填的，一个
+      `FO_PROXY_SLOT_TIMEOUT=很久` 会让**整条链在导入时崩**，而它只是个
+      保守的超时/冷却参数。坏值退化成默认值远好于起不来。
+
+    ⚠ `raw` 由调用方用 `os.getenv("名字", "")` 传入（**不要**把名字交给本
+      函数）—— 配置漂移门禁要求每个被读取的变量名都**字面**出现在源码里。
+    """
+    if raw == "":
+        return default
+    try:
+        return cast(raw)
+    except (TypeError, ValueError):
+        return default
+
+
 # ── 目标站点 ──────────────────────────────────────────────────────
 # 站点根。API 前缀实测是 `/api`（前端 `src` 里写死 `basePath:"/api"`）。
 SITE_BASE = os.getenv("FO_SITE_BASE", "https://opc.fiime.cn").rstrip("/")
@@ -233,9 +252,9 @@ PROXY = os.getenv("FO_PROXY", "").strip()
 # ⚠ 每日配额是**当天**恢复的，所以冷却不该短于"跑到明天"。
 #   但设 24h 会让"偶发一次 429 抖动"的出口整天闲置。
 #   取 6h：真满的基本退出本轮，抖动的还能回来（与参考项目的取舍一致）。
-PROXY_COOLDOWN = float(os.getenv("FO_PROXY_COOLDOWN", "120") or 120)
-PROXY_COOLDOWN_MAX = float(os.getenv("FO_PROXY_COOLDOWN_MAX", "21600") or 21600)
-PROXY_SLOT_TIMEOUT = float(os.getenv("FO_PROXY_SLOT_TIMEOUT", "240") or 240)
+PROXY_COOLDOWN = _env_num(os.getenv("FO_PROXY_COOLDOWN", ""), 120.0, float)
+PROXY_COOLDOWN_MAX = _env_num(os.getenv("FO_PROXY_COOLDOWN_MAX", ""), 21600.0, float)
+PROXY_SLOT_TIMEOUT = _env_num(os.getenv("FO_PROXY_SLOT_TIMEOUT", ""), 240.0, float)
 # 起飞前是否做槽位端口连通检查（默认开）。
 # 🔴 默认开的理由：槽位实例是**独立前台进程**，很容易"配置还在、进程没了"。
 #    那种状态下每条记录都以"代理连接错误"收场，而"注册全失败"最容易被

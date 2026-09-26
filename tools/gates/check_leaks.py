@@ -35,6 +35,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 ENV_FILE = ROOT / ".env"
 
+# 🔴 本脚本刻意对**业务代码**零依赖（它是独立闸门），但「输出编码」这件事必须
+#    与其它入口共用一份实现：Windows GBK 控制台重定向时 `✓`/`✗` 会直接崩。
+#    只借 `src.cli` 里那个纯 stdlib 的小函数，不引入 requests 之类的传递依赖。
+sys.path.insert(0, str(ROOT))
+
+from src.cli import force_utf8_stdio  # noqa: E402
+
+force_utf8_stdio()
+
 # 这些变量里的**值**是要保护的标识。
 SENSITIVE_VARS = (
     "FO_SLOT_EGRESS_IPS", "FO_WORKER_BASE", "FO_WORKER_ADMIN_TOKEN",

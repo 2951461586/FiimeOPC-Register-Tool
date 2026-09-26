@@ -14,6 +14,43 @@
 """
 
 import argparse
+import sys
+
+
+def force_utf8_stdio(streams=None) -> None:
+    """尽量把 stdout/stderr 切到 UTF-8 —— Windows 默认 GBK 控制台会直接崩。
+
+    🔴 背景：本项目输出大量 `✓`/`⚠`/emoji 与中文。Python 在 Windows 上按
+      控制台代码页（常见 GBK/cp936）编码；**输出被重定向/管道**时
+      （`python run.py > log.txt`、`--help | more`、CI 抓取），无法编码的
+      字符会直接抛 `UnicodeEncodeError`，整条命令挂掉。
+      真机控制台走 `WriteConsoleW` 通常没事 —— 所以这个 bug **只在重定向时**
+      出现，而"重定向到日志"恰恰是最常见的用法。
+
+    为什么放在 `src/cli.py` 并在导入时生效：本项目五个 CLI 入口都 import 本
+      模块，一处接线、不会漂移（与本模块其它内容的理由一致）。
+
+    做法：`reconfigure(encoding="utf-8", errors="replace")`。
+      · 能改就改（Python 3.7+ 的 TextIOWrapper 支持）；
+      · 流被换成不支持 `reconfigure` 的对象（pytest 捕获、`pythonw` 下
+        `stdout is None` 等）→ 跳过；
+      · 改不了也不能影响进程启动 —— 最坏只是个别字符显示成 `?`，绝不抛异常。
+
+    `streams` 仅供测试注入；默认取 `sys.stdout` / `sys.stderr`。
+    """
+    for stream in (streams if streams is not None else (sys.stdout, sys.stderr)):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            continue
+
+
+# 导入即生效 —— 见上面 docstring 里"为什么放本模块"。
+force_utf8_stdio()
+
 
 # ── 退出码总表（全项目只有这一处定义）────────────────────────────
 # 🔴 集中定义不是为了好看：本项目**五个**入口/分支会返回非零码，散着写迟早
