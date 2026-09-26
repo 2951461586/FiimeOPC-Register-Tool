@@ -91,7 +91,7 @@ def render_batch_report(
     #    `batch_total`（批次墙钟）会让这一列**每行都是同一个数**，
     #    看起来像"所有账号耗时一样"，其实是显示 bug。
     print("\n耗时明细（秒）：")
-    print(f"  {'email':44s} {'出口':>15s} {'注册':>7s} {'登录':>7s} {'建Key':>7s} {'合计':>7s}")
+    print(f"  {'email':44s} {'出口':>20s} {'注册':>7s} {'登录':>7s} {'建Key':>7s} {'合计':>7s}")
     totals: list = []
     for r in results:
         tm = r.timings or {}
@@ -103,19 +103,22 @@ def render_batch_report(
             total_s = f"{total_ms / 1000:.1f}"
         else:
             total_s = "-"
-        egress = (r.egress or "-")[:15]
+        # 🔴 不要静默截断 scope 的**尾部**：`res-<hash>` 是会话桶名，切尾会把它
+        #    显示成**另一个桶**。超长才加省略号。
+        eg = r.egress or "-"
+        egress = eg if len(eg) <= 20 else eg[:19] + "…"
         print(
-            f"  {(r.email or '(未建邮箱)'):44s} {egress:>15s} "
+            f"  {(r.email or '(未建邮箱)'):44s} {egress:>20s} "
             f"{fmt_ms(tm.get('register')):>7s} "
             f"{fmt_ms(tm.get('login')):>7s} "
             f"{fmt_ms(tm.get('key')):>7s} {total_s:>7s}"
         )
     if totals:
         hdr = f"── 统计（{len(totals)} 个完整样本）"
-        print(f"  {hdr:44s} {'':>15s}")
+        print(f"  {hdr:44s} {'':>20s}")
         # 🔴 四个标签与四个取值**必须在同一个 print 里**（见 `latency_summary`）。
         print(
-            f"  {'   ' + LATENCY_LABELS:44s} {'':>15s} "
+            f"  {'   ' + LATENCY_LABELS:44s} {'':>20s} "
             f"{'':>7s} {'':>7s} {'':>7s} {latency_summary(totals)}"
         )
 
@@ -325,7 +328,9 @@ def render_batch_report(
             print("\n各出口消耗（本次）：")
             for s in scopes:
                 st = quota.status(scope=s)
-                print(f"  {s:16s} {st.describe()}")
+                # 🔴 `describe()` 自带“出口 <scope>”前缀，别再拼一次 ——
+                #    否则会成 “res-xxx 出口 res-xxx 在 24h 窗口内已用 …”。
+                print(f"  {st.describe()}")
         else:
             print(f"\n本地配额：{quota.status().describe()}")
     print(

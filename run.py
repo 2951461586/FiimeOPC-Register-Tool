@@ -107,10 +107,11 @@ def _print_pool_summary() -> int:
         return -1
 
     n_egress = len(seen)
+    # ⚠ 提示只在**槽位数 ≠ 不同出口数**时才有意义（“6 槽 / 4 出口 → 并发是 4”）。
+    #    每个槽位出口都不同时，它退化成废话（“并发上限是 19，不是 19”）。
+    cap = f"（⚠ 并发上限是 {n_egress}，不是 {len(slots)}）" if n_egress < len(slots) else ""
     print(
-        f"   ── {len(slots)} 槽 / {n_egress} 个不同出口，"
-        f"合计可用额度 {total_left} 个"
-        f"（⚠ 并发上限是 {n_egress}，不是 {len(slots)}）",
+        f"   ── {len(slots)} 槽 / {n_egress} 个不同出口，合计可用额度 {total_left} 个{cap}",
         flush=True,
     )
     return total_left

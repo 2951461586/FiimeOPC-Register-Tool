@@ -18,11 +18,18 @@ from src.report import fmt_ms, latency_summary, render_batch_report
 
 # ── 依赖桩 ────────────────────────────────────────────────────────
 class _QuotaStub:
+    def __init__(self):
+        self._scope = None
+
     def status(self, scope=None):
+        # 真实的 `quota.status()` 会记住 scope，`describe()` 里带“出口 <scope>”
+        # 前缀；桩也照做，否则报告里“出口 xxx 出口 xxx”的重复前缀测不出来。
+        self._scope = scope
         return self
 
     def describe(self):
-        return "1/5（窗口 24h）"
+        who = f"出口 {self._scope}" if self._scope else "全局（未分出口）"
+        return f"{who} 在 24h 窗口内已用 1/5（余 4）"
 
 
 def _render(results, capsys, written=None):
@@ -297,6 +304,26 @@ class TestFailureAttribution:
         )
         assert error_kind_of(r) == ERR_IP_QUOTA
         assert error_kind_of(r) != ERR_QUOTA_GUARD
+
+
+class TestEgressDisplay:
+    """🔴 展示层的两个坑：重复“出口”前缀 / 静默截断 scope 尾。"""
+
+    def test_consumption_line_has_no_double_prefix(self, capsys):
+        r = _ok("a@x.com")
+        r.egress = "res-2498c101c6be"
+        out = _render([r], capsys)
+        assert "出口 res-2498c101c6be 在" in out
+        assert "res-2498c101c6be 出口 res-2498c101c6be" not in out
+
+    def test_timing_table_does_not_truncate_scope_tail(self, capsys):
+        """scope 是桶名，切掉尾巴会把它显示成**另一个桶**。"""
+        r = _ok("a@x.com")
+        r.egress = "res-2498c101c6be"
+        r.timings = {"register": 1000, "login": 500, "key": 400}
+        out = _render([r], capsys)
+        assert "res-2498c101c6be" in out
+        assert "res-2498c101c6b " not in out, "尾字符不能丢"
 
 
 if __name__ == "__main__":
