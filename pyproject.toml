@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fiimeopc-register-tool"
+version = "0.1.0"
+description = "FiimeOPC 注册 + 邮箱激活 + API Key 提取（纯协议链路）"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+dependencies = [
+    "requests>=2.31",
+]
+
+# 🔴 本链**不需要 playwright / cryptography** —— 与参考项目
+#    (Intern-Register-Tool) 最大的架构差异，理由见 README「为什么没有浏览器」：
+#      · 注册无验证码（实测 `/api/settings/public` 返回 captchaEnabled=false）
+#      · 登录无验证码、无 2FA（实测 POST /api/auth/login 直接返回 user）
+#      · 密码是**明文 POST**（站点前端不做 RSA 加密，实测请求体就是原密码）
+#    整链纯 HTTP，所以依赖只有 requests。
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "ruff>=0.16,<0.17",
+]
+
+[tool.setuptools]
+packages = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q --strict-markers -rs"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = [".workbuddy-ai", "__pycache__"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = [
+    # E501 行宽：注释里大量中文长句 + 实测数据表，折行会更难读。
+    "E501",
+    # B008 函数调用作默认值：本项目用它做"可注入的默认实现"（log=print）。
+    "B008",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# tools/ 下的脚本有**结构性** E402：`sys.path` 注入必须排在 `from src ...` 之前。
+"tools/**/*.py" = ["E402"]

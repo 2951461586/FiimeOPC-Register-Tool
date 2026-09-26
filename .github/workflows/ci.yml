@@ -1,0 +1,85 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # 版本范围与 pyproject.toml 的 dev 依赖保持一致。
+      - name: 安装 ruff
+        run: pip install "ruff>=0.16,<0.17"
+
+      - name: ruff check
+        run: python -m ruff check .
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # 🔴 **不要**只装 `pytest`。参考项目在这里栽过：注释写着"测试链上零第三方
+      #    依赖"，结果 CI 连续红 3 次而本地全绿（本地早就装过了）。
+      #
+      #    本项目的依赖链（与参考项目不同，但同样不能靠假设）：
+      #      tests/test_report.py → from src.pipeline import ...
+      #        → src/pipeline.py  → from .opc import OpcClient
+      #          → src/opc.py     → import requests            ← 缺它必红
+      #
+      #    `pip install -e ".[dev]"` 一次装齐 `requests` + `pytest` + `ruff`，
+      #    与 pyproject 单一来源，不会漂移。
+      - name: 安装依赖
+        run: pip install -e ".[dev]"
+
+      - name: pytest
+        run: python -m pytest -q
+
+      # 🔴 测试链**必须**离线可跑。真实站点交互全在 `tools/probes/` 下 ——
+      #    CI 上跑真实注册会**烧掉一个出口当天的额度**，而那个上限只有 5 个/天。
+      #    这条断言是"有人不小心把探针 import 进测试"的兜底：
+      #    `tests/` 里出现 `requests.get(`/`session.post(` 就直接红。
+      - name: 断言测试链不含真实网络调用
+        run: |
+          if grep -rnE 'requests\.(get|post|delete)\(|session\.(get|post|delete)\(' tests/ ; then
+            echo "::error::tests/ 里出现了真实 HTTP 调用 —— 测试链必须离线可跑"
+            exit 1
+          fi
+          echo "OK: tests/ 无真实网络调用"
+
+  leak-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # 🔴 闸门从 `.env` 读真实标识 —— 而 CI 上没有 `.env`（它 gitignored）。
+      #    所以这里**先跑自检**：证明"扫描器能抓到种入的值"。
+      #    自检通过只说明闸门本身是好的，**不能**据此判定仓库干净 ——
+      #    真正的判定依赖 `.env`，那是本地提交前跑的（见 README）。
+      #
+      #    ⚠ 不要为了"让这一步看起来有用"而在 CI 里造一个假 `.env`：
+      #      那会让闸门永远绿，比没有闸门更危险。
+      - name: 泄漏闸门自检（证明闸门不是空转）
+        run: python tools/gates/check_leaks.py --selftest
