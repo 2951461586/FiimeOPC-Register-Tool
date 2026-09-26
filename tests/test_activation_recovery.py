@@ -1,15 +1,16 @@
-"""激活自愈 + 恢复工具的选取逻辑。**不联网。**
+"""激活自愈（有界重试 + 取最新邮件）+ 恢复工具的选取逻辑。**不联网。**
 
 🔴 背景：站点偶发把激活邮件里的链接发坏（实测 2/10：既漏 `=`，token 还被截成
    62 位）。直接激活必然 400，白掉一个**已注册成功**的账号。
-   自愈 = `POST /auth/resend-activation` 重发 + 用**最新**邮件重试一次。
+   自愈 = `POST /auth/resend-activation` 重发 + 用**最新**邮件重试（有界）。
 """
 
 import importlib.util
 from pathlib import Path
 
-from src import opc
-from src.pipeline import activate_with_resend
+import pytest
+
+from src import opc, pipeline
 
 # 运维脚本在 tools/ops/ 下（不是包），用 importlib 按路径加载 —— 静态 import
 # 解析不了 `sys.path` 注入，而脚本本身靠它把仓库根加进 sys.path。
@@ -27,6 +28,13 @@ GOOD = "https://opc.fiime.cn/activate?token=" + "a" * 64
 BAD = "https://opc.fiime.cn/activate?token" + "b" * 62  # 漏 `=` 且只剩 62 位（站点缺陷）
 
 
+@pytest.fixture(autouse=True)
+def _fast_mail_poll(monkeypatch):
+    """把收信轮询压到毫秒级 —— 否则"没邮件"的分支要真等 120s。"""
+    monkeypatch.setattr(pipeline.config, "MAIL_POLL_TIMEOUT", 0.05)
+    monkeypatch.setattr(pipeline.config, "MAIL_POLL_INTERVAL", 0.005)
+
+
 class _Msg:
     def __init__(self, body: str, received_at: int = 2000):
         self.body = body
@@ -34,13 +42,15 @@ class _Msg:
 
 
 class _FakeMail:
-    def __init__(self, new_mail=None):
-        self._new = new_mail
+    """每次 `list_mails()` 返回同一批；`since_ts` 过滤保证已用过的不会重复命中。"""
+
+    def __init__(self, mails=None):
+        self._mails = list(mails or [])
         self.calls: list = []
 
-    def wait_for_mail(self, address, **kw):
-        self.calls.append((address, kw))
-        return self._new
+    def list_mails(self, email):
+        self.calls.append(email)
+        return list(self._mails)
 
 
 class _FakeClient:
@@ -64,7 +74,7 @@ class _FakeClient:
 
 
 def _run(mail, client, link, since_ts=1):
-    return activate_with_resend(
+    return pipeline.activate_with_resend(
         mail, client, "a@x.com", link, since_ts=since_ts, log=lambda *a: None
     )
 
@@ -86,13 +96,29 @@ def test_bad_link_triggers_resend_and_retry():
             opc.ActivateResult(ok=True, http_status=200),
         ]
     )
-    mail = _FakeMail(_Msg(GOOD, received_at=2500))
+    mail = _FakeMail([_Msg(GOOD, received_at=2500)])
     act, resent = _run(mail, client, BAD, since_ts=1001)
     assert act.ok is True
     assert resent is True
     assert client.resend_calls == ["a@x.com"]
     assert client.activated == ["b" * 62, "a" * 64], "先试坏的，再用重发的新 token"
-    assert mail.calls == [("a@x.com", {"since_ts": 1001})], "必须按 since_ts 只取新的"
+    assert mail.calls[0] == "a@x.com"
+
+
+def test_uses_newest_mail_not_first():
+    """迟到的旧邮件（token 已作废）在前、新邮件在后 —— 必须用**最新**那封。"""
+    client = _FakeClient(
+        [
+            opc.ActivateResult(ok=False, http_status=400, error="激活链接无效或已使用"),
+            opc.ActivateResult(ok=True, http_status=200),
+        ]
+    )
+    old = _Msg("https://opc.fiime.cn/activate?token=" + "c" * 64, received_at=1500)
+    new = _Msg(GOOD, received_at=2500)
+    act, resent = _run(_FakeMail([old, new]), client, BAD, since_ts=1001)
+    assert act.ok is True
+    assert resent is True
+    assert client.activated == ["b" * 62, "a" * 64], "用了旧邮件，不是最新的"
 
 
 def test_network_failure_does_not_resend():
@@ -106,7 +132,7 @@ def test_network_failure_does_not_resend():
 
 def test_no_link_goes_straight_to_resend():
     client = _FakeClient([opc.ActivateResult(ok=True, http_status=200)])
-    act, resent = _run(_FakeMail(_Msg(GOOD, received_at=3000)), client, None)
+    act, resent = _run(_FakeMail([_Msg(GOOD, received_at=3000)]), client, None)
     assert act.ok is True
     assert resent is True
     assert client.resend_calls == ["a@x.com"]
@@ -116,27 +142,30 @@ def test_resend_rejected_returns_original_failure():
     client = _FakeClient(
         [opc.ActivateResult(ok=False, http_status=400, error="invalid")], resend_ok=False
     )
-    act, resent = _run(_FakeMail(_Msg(GOOD)), client, BAD)
+    act, resent = _run(_FakeMail([_Msg(GOOD)]), client, BAD)
     assert act.ok is False
     assert resent is False
     assert act.error == "invalid"
+    assert len(client.resend_calls) == 1, "重发被拒就停，不再重试"
 
 
-def test_resend_but_no_new_mail():
+def test_bounded_retry_when_no_mail():
+    """一次重发没等到邮件 → 再重发一次（有界），最终仍失败。"""
     client = _FakeClient([opc.ActivateResult(ok=False, http_status=400, error="invalid")])
-    act, resent = _run(_FakeMail(None), client, BAD)
+    act, resent = _run(_FakeMail([]), client, BAD)
     assert act.ok is False
     assert resent is True
-    assert "未收到新邮件" in act.error
+    assert len(client.resend_calls) == pipeline.RESEND_ATTEMPTS, "没做有界重试"
+    assert "未收到可用新邮件" in act.error
 
 
-def test_resend_mail_still_has_no_token():
+def test_new_mail_without_token_keeps_retrying_then_fails():
     client = _FakeClient([opc.ActivateResult(ok=False, http_status=400, error="invalid")])
-    mail = _FakeMail(_Msg("https://opc.fiime.cn/activate", received_at=2500))
+    mail = _FakeMail([_Msg("https://opc.fiime.cn/activate", received_at=2500)])
     act, resent = _run(mail, client, BAD)
     assert act.ok is False
     assert resent is True
-    assert "仍无 token" in act.error
+    assert "未收到可用新邮件" in act.error
 
 
 # ── 恢复工具：选取 + 取最新链接 ───────────────────────────────────

@@ -366,6 +366,41 @@ class AccountRecord:
         return json.dumps(asdict(self), ensure_ascii=False, indent=2)
 
 
+# 重发上限。站点偶发漏发（实测同一批还夹着 Worker 连接重置），一次不够；
+# 但**每次重发都会作废上一个 token**，且每轮要占着收信超时，不能无限重试。
+RESEND_ATTEMPTS = 2
+
+
+def _newest_activation_link(mail, email: str, since_ts: int, *, timeout: float, log=print) -> tuple:
+    """轮询直到 `since_ts` **之后**出现带激活链接的邮件；返回**最新**那封的 link。
+
+    返回 `(link | None, newest_received_at)`。
+
+    🔴 用 `list_mails()` 取**最新**一封，而不是 `wait_for_mail()`（它返回第一封
+      匹配的）—— 每次重发都会作废上一个 token，拿到迟到旧邮件里的 token 就会
+      400。这是本函数存在的全部理由。
+    """
+    deadline = time.time() + timeout
+    interval = config.MAIL_POLL_INTERVAL
+    while True:
+        try:
+            mails = mail.list_mails(email)
+        except Exception as ex:
+            log(f"收信失败：{type(ex).__name__}: {ex}")
+            mails = []
+        best_link, best_ts = None, since_ts
+        for m in mails:
+            ts = m.received_at or 0
+            if ts <= since_ts:
+                continue
+            lk = opc.find_activation_url(m.body or "")
+            if lk and opc.OpcClient.token_from_activation_url(lk) and ts >= best_ts:
+                best_link, best_ts = lk, ts
+        if best_link is not None or time.time() >= deadline:
+            return best_link, best_ts
+        time.sleep(interval)
+
+
 def activate_with_resend(
     mail,
     client: OpcClient,
@@ -375,7 +410,7 @@ def activate_with_resend(
     since_ts: int = 0,
     log=print,
 ) -> tuple:
-    """激活账号；链接坏了 / 激活被拒就**重发激活邮件 + 用最新一封重试一次**。
+    """激活账号；链接坏了 / 激活被拒就**重发激活邮件 + 用最新一封重试**。
 
     返回 `(opc.ActivateResult, resent: bool)`。
 
@@ -385,52 +420,70 @@ def activate_with_resend(
       会发一封格式正确的新邮件（首次主题「激活你的…」，重发「请激活你的…」，
       正文是 `?token=<64hex>`）。
 
-    🔴 **重发会作废上一个 token** —— 所以 `since_ts` 必须指到"旧邮件之后"，
-      否则会再次拿到旧链接（实测：拿旧 token 激活 → `400 无效或已使用`）。
+    🔴 **重发会作废上一个 token** —— 两个后果：
+      ① `since_ts` 必须指到"旧邮件之后"，否则会再次拿到旧链接
+         （实测：拿旧 token 激活 → `400 无效或已使用`）；
+      ② 取链接必须取**最新**那一封（`_newest_activation_link`），不能拿
+         `wait_for_mail` 的第一封匹配 —— 迟到的旧邮件可能先被看到。
+
+    🔀 有界重试：一次重发没等到邮件就再重发一次（`RESEND_ATTEMPTS`）——
+      站点偶发漏发（实测同一批还夹着 Worker 连接重置），单次不够；但每轮要占
+      收信超时、且有作废旧 token 的代价，所以必须**有界**。
 
     `link` 传 `None` 表示当前没有可用链接，直接走重发。
     """
-    act = None
-    if link:
-        tok = opc.OpcClient.token_from_activation_url(link)
-        act = (
-            client.activate(tok)
-            if tok
-            else opc.ActivateResult(error="激活链接里没有 token", http_status=400)
-        )
-        # 只有"链接 / token 被拒"（400）才值得重发；网络类失败重发没用。
-        if act.ok or act.http_status != 400:
-            return act, False
+
+    def _try(one_link: str | None) -> opc.ActivateResult:
+        tok = opc.OpcClient.token_from_activation_url(one_link) if one_link else ""
+        if not tok:
+            return opc.ActivateResult(error="激活链接里没有 token", http_status=400)
+        return client.activate(tok)
+
+    act = _try(link) if link else None
+    # 只有"链接 / token 被拒"（400）才值得重发；网络类失败重发没用。
+    if act is not None and (act.ok or act.http_status != 400):
+        return act, False
+    if act is not None:
         log(f"↻ 激活被拒（{act.error[:40]}）→ 重发激活邮件后重试")
     else:
         log("↻ 无可用激活链接 → 重发激活邮件")
 
-    try:
-        rs = client.resend_activation(email)
-    except Exception as ex:
-        log(f"重发失败：{type(ex).__name__}: {ex}")
-        if act is None:
-            act = opc.ActivateResult(error=f"resend: {ex}")
-        return act, False
-    if not rs.ok:
-        log(f"重发被拒：{rs.error or rs.http_status}")
-        return act or opc.ActivateResult(
-            error=f"resend: {rs.error}", http_status=rs.http_status
-        ), False
-
-    m2 = mail.wait_for_mail(email, since_ts=since_ts)
-    if not m2:
-        log("重发后没等到新邮件")
-        # ⚠ 用 `is None` 判断，不能写 `act or …` —— dataclass 实例恒为真值，
-        #    `or` 永远选中 `act`，新错误根本返回不出去。
-        return opc.ActivateResult(error="resend 后未收到新邮件", http_status=400), True
-    link2 = opc.find_activation_url(m2.body)
-    tok2 = opc.OpcClient.token_from_activation_url(link2) if link2 else ""
-    if not tok2:
+    resent = False
+    got_new_link = False
+    fail = act
+    last_ts = since_ts
+    for attempt in range(1, RESEND_ATTEMPTS + 1):
+        try:
+            rs = client.resend_activation(email)
+        except Exception as ex:
+            log(f"重发失败：{type(ex).__name__}: {ex}")
+            if fail is None:
+                fail = opc.ActivateResult(error=f"resend: {ex}")
+            return fail, resent
+        if not rs.ok:
+            log(f"重发被拒：{rs.error or rs.http_status}")
+            if fail is None:
+                fail = opc.ActivateResult(error=f"resend: {rs.error}", http_status=rs.http_status)
+            return fail, resent
+        resent = True
+        link2, ts = _newest_activation_link(
+            mail, email, last_ts, timeout=config.MAIL_POLL_TIMEOUT, log=log
+        )
+        if link2 is None:
+            log(f"第 {attempt} 次重发后没等到新邮件")
+            continue
+        got_new_link = True
+        last_ts = ts
+        fail = _try(link2)
+        if fail.ok:
+            return fail, True
+        log(f"第 {attempt} 次重发后的 token 仍被拒（{fail.error[:40]}）")
+    if fail is None or not got_new_link:
+        # 一次都没拿到"新的可用链接" —— 明说这一点（比原 400 更贴近真相）。
         return opc.ActivateResult(
-            error=f"重发后链接仍无 token（{len(m2.body)}B）", http_status=400
-        ), True
-    return client.activate(tok2), True
+            error=f"resend {RESEND_ATTEMPTS} 次仍未收到可用新邮件", http_status=400
+        ), resent
+    return fail, resent
 
 
 # ────────────────────────────────────────────────────────────────
