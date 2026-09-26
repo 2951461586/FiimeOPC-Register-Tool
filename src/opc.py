@@ -121,6 +121,11 @@ _URL_RE = re.compile(
     re.I,
 )
 
+# 🔴 站点**偶发**把激活链接发成 `.../activate?token<hex>`（漏了 `=`）——
+#    实测一批 10 个账号里 2 个如此，且邮件原文的确就是 `t o k e n <hex>`
+#    （不是我们截断的）。用它从整串里兜底捞 token。
+_ACTIVATION_TOKEN_RE = re.compile(r"token=?([0-9a-f]{32,})", re.I)
+
 
 def _invited_at_of(user: dict) -> int:
     """从服务端的 `user` 对象里取 `invitedAt`。
@@ -139,6 +144,20 @@ def _invited_at_of(user: dict) -> int:
         return int(user.get("invitedAt") or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def _int_of(v, default: int = 0) -> int:
+    """宽松取整：`None`/空/非数字一律回落 `default`。
+
+    🔴 服务端字段是外部输入（也可能被中间层改写），一个坏值不该让整条链崩；
+      而这些值只用于展示 / 兜底，坏值退化成默认值远好于抛异常。
+    """
+    if v is None or v == "":
+        return default
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return default
 
 
 # ── 结果类型 ──────────────────────────────────────────────────────
@@ -418,20 +437,27 @@ class OpcClient:
         res.ok = True
         res.need_activation = bool(j.get("needActivation"))
         res.user = j.get("user") or {}
-        res.token_reward = int(j.get("registrationTokenReward") or 0)
+        res.token_reward = _int_of(j.get("registrationTokenReward"))
         res.invited_at = _invited_at_of(res.user)
         return res
 
     # ── 激活 ──────────────────────────────────────────────────
     @staticmethod
     def token_from_activation_url(url: str) -> str:
-        """从 `https://opc.fiime.cn/activate?token=<64hex>` 里取 token。
+        """从 `https://opc.fiime.cn/activate?token=<hex>` 里取 token。
 
         🔴 只认 query 里的 `token`，**不要**拿整条 URL 去 POST ——
           实测激活接口收的是 `{"token": "<hex>"}`，不是完整链接。
+
+        ⚠ 站点偶尔漏掉 `=`（实测 2/10，邮件原文就是 `?token<hex>`）。此时
+          `parse_qs` 解析不出 token —— 退一步用正则捞 `token` 后的 hex，
+          避免因站点模板缺陷白掉一个**已经注册成功**的账号。
         """
-        qs = parse_qs(urlparse(url).query)
-        return (qs.get("token") or [""])[0]
+        tok = (parse_qs(urlparse(url).query).get("token") or [""])[0]
+        if tok:
+            return tok
+        m = _ACTIVATION_TOKEN_RE.search(url)
+        return m.group(1) if m else ""
 
     def activate(self, token: str) -> ActivateResult:
         r = self._post("/auth/activate", {"token": token})
@@ -442,7 +468,7 @@ class OpcClient:
         j = r.json() or {}
         res.ok = True
         res.user = j.get("user") or {}
-        res.token_reward = int(j.get("registrationTokenReward") or 0)
+        res.token_reward = _int_of(j.get("registrationTokenReward"))
         res.invited_at = _invited_at_of(res.user)
         return res
 
@@ -514,8 +540,8 @@ class OpcClient:
         return ServiceInfo(
             enabled=bool(s.get("enabled")),
             api_base_path=str(s.get("apiBasePath") or config.MODEL_V1_PATH),
-            daily_token_limit=int(s.get("dailyTokenLimit") or 0),
-            max_keys_per_user=int(s.get("maxApiKeysPerUser") or 0),
+            daily_token_limit=_int_of(s.get("dailyTokenLimit")),
+            max_keys_per_user=_int_of(s.get("maxApiKeysPerUser")),
             models=s.get("models") or [],
         )
 
@@ -729,7 +755,7 @@ def gen_password(length: int = None) -> str:
     ⚠ 最小长度 5（`Lz#` + 至少一个数字 + 至少一个小写字母）；传更小的值会被
       抬到 5 并**不报错** —— 密码长度不是本站的校验点，静默兜底比抛异常合适。
     """
-    n = int(length or config.PASSWORD_LEN)
+    n = _int_of(length or config.PASSWORD_LEN, config.PASSWORD_LEN)
     n = max(n, len(_PW_PREFIX) + 2)
     body_len = n - len(_PW_PREFIX)
     # 先放"必须有"的，再用普通字符补满，最后 shuffle 打散位置特征。
