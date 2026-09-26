@@ -71,13 +71,13 @@ QUOTA_STREAK_STOP = 2
 # 结构化之后，"服务端到底返回了什么"由**打标点**决定，读点只认字段。
 # 打标只在**真的拿到服务端响应**的地方做（`stage_register`），
 # 读点统一走 `error_kind_of()`。
-ERR_NONE = ""                    # 没有错误
-ERR_IP_QUOTA = "ip_quota"        # 服务端返回"该 IP 今日注册数量已达上限"
+ERR_NONE = ""  # 没有错误
+ERR_IP_QUOTA = "ip_quota"  # 服务端返回"该 IP 今日注册数量已达上限"
 ERR_QUOTA_GUARD = "quota_guard"  # 本地守卫主动中止，**一个请求都没发**
-ERR_REJECTED = "rejected"        # 服务端明确拒绝了这次注册（非配额）
-ERR_NETWORK = "network"          # 网络 / 超时 / HTTP 层
-ERR_MAIL = "mail"                # 激活邮件没到 / 读不出来
-ERR_KEY = "key"                  # 登录或建 Key 阶段
+ERR_REJECTED = "rejected"  # 服务端明确拒绝了这次注册（非配额）
+ERR_NETWORK = "network"  # 网络 / 超时 / HTTP 层
+ERR_MAIL = "mail"  # 激活邮件没到 / 读不出来
+ERR_KEY = "key"  # 登录或建 Key 阶段
 
 
 def _rec_field(rec, name: str) -> str:
@@ -191,9 +191,11 @@ class QuotaGovernor:
             #    错误结论（参考项目实测：53/40 "超额"，但 6 个新出口一个都没用过）。
             #    改由每个 producer 按自己的 scope 单独检查。
             n = self.pool.distinct_egress()
-            self.log(f"ℹ 池模式：跳过全局配额守卫（全局计数是**老出口**的，"
-                     f"与新出口无关）—— 改按出口分别计数，"
-                     f"每出口上限 {quota.limit()} 个。")
+            self.log(
+                f"ℹ 池模式：跳过全局配额守卫（全局计数是**老出口**的，"
+                f"与新出口无关）—— 改按出口分别计数，"
+                f"每出口上限 {quota.limit()} 个。"
+            )
             if n:
                 self.log(f"   {n} 个不同出口 → 本轮理论上限 {n * quota.limit()} 个")
             return count
@@ -203,10 +205,12 @@ class QuotaGovernor:
             raise _QuotaAbort(str(ex)) from ex
         if st.used + count > st.limit:
             keep = st.remaining
-            self.log(f"⚠ 本地配额保护：计划注册 {count} 个，但{st.describe()} "
-                     f"—— 本次只跑 {keep} 个。\n"
-                     f"  想全跑：调大 FO_IP_QUOTA_MAX，或加 --ignore-quota"
-                     f"（先确认服务端确实已恢复）。")
+            self.log(
+                f"⚠ 本地配额保护：计划注册 {count} 个，但{st.describe()} "
+                f"—— 本次只跑 {keep} 个。\n"
+                f"  想全跑：调大 FO_IP_QUOTA_MAX，或加 --ignore-quota"
+                f"（先确认服务端确实已恢复）。"
+            )
             return keep
         return count
 
@@ -245,8 +249,7 @@ class QuotaGovernor:
         if not st.exhausted:
             return ""
         log(f"跳过（出口 {scope} 配额保护：{st.describe()}）")
-        return (f"quota guard: 出口 {scope} 本地计数已满"
-                f"（{st.describe()}），未发请求")
+        return f"quota guard: 出口 {scope} 本地计数已满（{st.describe()}），未发请求"
 
     # ── 运行中 ────────────────────────────────────────────────
     def note_result(self, ok: bool, rec) -> None:
@@ -366,10 +369,18 @@ class AccountRecord:
 # ────────────────────────────────────────────────────────────────
 # Stage 1+2：建邮箱 → 注册 → 收信激活（纯 HTTP，**消耗 IP 配额**）
 # ────────────────────────────────────────────────────────────────
-def stage_register(mail, client: OpcClient, rec: AccountRecord, *,
-                   gate: _ScopeRateLimiter = None, quota_scope: str = "",
-                   should_stop=None, mail_domain: str = None,
-                   invite_code: str = None, log=print) -> bool:
+def stage_register(
+    mail,
+    client: OpcClient,
+    rec: AccountRecord,
+    *,
+    gate: _ScopeRateLimiter = None,
+    quota_scope: str = "",
+    should_stop=None,
+    mail_domain: str = None,
+    invite_code: str = None,
+    log=print,
+) -> bool:
     """注册 + 激活。
 
     `gate`：**按出口**的限速闸门（`_ScopeRateLimiter`）。在真正调用注册接口前
@@ -513,8 +524,7 @@ def stage_register(mail, client: OpcClient, rec: AccountRecord, *,
     rec.invited_at = reg.invited_at
     if rec.invite_code and rec.invited_at:
         rec.stages["invite"] = "ok"
-        log(f"邀请码 {rec.invite_code} 已在注册阶段生效"
-            f"（invitedAt={rec.invited_at}）")
+        log(f"邀请码 {rec.invite_code} 已在注册阶段生效（invitedAt={rec.invited_at}）")
 
     # ── 5. 收激活信 ───────────────────────────────────────────
     t = time.time()
@@ -524,8 +534,7 @@ def stage_register(mail, client: OpcClient, rec: AccountRecord, *,
         sub["mail_polls"] = getattr(mail, "last_polls", 0)
         sub["mail_5xx"] = getattr(mail, "last_http_errors", 0)
         if not m:
-            why = (getattr(mail, "last_error", "")
-                   or "激活邮件在超时内未到达")
+            why = getattr(mail, "last_error", "") or "激活邮件在超时内未到达"
             rec.status = "failed"
             rec.error = f"mail: {why}"
             rec.error_kind = ERR_MAIL
@@ -539,8 +548,9 @@ def stage_register(mail, client: OpcClient, rec: AccountRecord, *,
         link = opc.find_activation_url(m.body)
         if not link:
             rec.status = "failed"
-            rec.error = (f"mail: 正文里找不到激活链接"
-                         f"（主题 {m.subject[:40]!r}，正文 {len(m.body)} 字节）")
+            rec.error = (
+                f"mail: 正文里找不到激活链接（主题 {m.subject[:40]!r}，正文 {len(m.body)} 字节）"
+            )
             rec.error_kind = ERR_MAIL
             rec.timings["register"] = round((time.time() - t0) * 1000)
             rec.timings["register_detail"] = sub
@@ -573,10 +583,8 @@ def stage_register(mail, client: OpcClient, rec: AccountRecord, *,
             else:
                 # 这是本链**唯一**能暴露"码不对"的地方 —— 服务端不会报错，
                 # 账号也建得好好的，只有这个字段是 0。
-                rec.stages["invite"] = ("⚠ 已发码但服务端未记录受邀"
-                                        "（码可能不存在/已失效/自邀）")
-                log(f"⚠ 邀请码 {rec.invite_code} 已发出，但 invitedAt=0"
-                    f" —— 推荐关系**未成立**")
+                rec.stages["invite"] = "⚠ 已发码但服务端未记录受邀（码可能不存在/已失效/自邀）"
+                log(f"⚠ 邀请码 {rec.invite_code} 已发出，但 invitedAt=0 —— 推荐关系**未成立**")
     except Exception as ex:
         rec.status = "failed"
         rec.error = f"activate: {ex}"
@@ -591,9 +599,14 @@ def stage_register(mail, client: OpcClient, rec: AccountRecord, *,
     return True
 
 
-def _register_with_retry(client: OpcClient, rec: AccountRecord,
-                         gate: _ScopeRateLimiter, scope: str, log,
-                         invite_code: str = "") -> opc.RegisterResult:
+def _register_with_retry(
+    client: OpcClient,
+    rec: AccountRecord,
+    gate: _ScopeRateLimiter,
+    scope: str,
+    log,
+    invite_code: str = "",
+) -> opc.RegisterResult:
     """调注册接口，按 429 的**类别**分流处理。
 
     🔴 两种 429 的处置完全相反（这是本项目最重要的分流）：
@@ -609,14 +622,12 @@ def _register_with_retry(client: OpcClient, rec: AccountRecord,
     """
     last = None
     for attempt in range(config.REG_RATE_RETRY + 1):
-        last = client.register(rec.username, rec.email, rec.password,
-                               invite_code=invite_code)
+        last = client.register(rec.username, rec.email, rec.password, invite_code=invite_code)
         if last.ok:
             return last
         if last.limit_kind == opc.LIMIT_IP_QUOTA:
             raise _IpQuotaBlocked(last.error or "该 IP 今日注册数量已达上限")
-        if last.limit_kind in (opc.LIMIT_RATE, opc.LIMIT_OTHER) \
-                and attempt < config.REG_RATE_RETRY:
+        if last.limit_kind in (opc.LIMIT_RATE, opc.LIMIT_OTHER) and attempt < config.REG_RATE_RETRY:
             # 退避重试。**必须先"占住"这个出口的闸门名额**，否则重试会
             # 立刻再撞一次（服务端的窗口是从**上一次请求**算的）。
             if gate is not None:
@@ -630,9 +641,15 @@ def _register_with_retry(client: OpcClient, rec: AccountRecord,
 # ────────────────────────────────────────────────────────────────
 # Stage 3+4+5：登录 → 建 Key → 校验（**不消耗注册配额**）
 # ────────────────────────────────────────────────────────────────
-def stage_login_key(rec: AccountRecord, *, client: OpcClient = None,
-                    key_name: str = "default", verify: bool = True,
-                    probe: bool = False, log=print) -> bool:
+def stage_login_key(
+    rec: AccountRecord,
+    *,
+    client: OpcClient = None,
+    key_name: str = "default",
+    verify: bool = True,
+    probe: bool = False,
+    log=print,
+) -> bool:
     """登录 → 建 API Key →（可选）校验。
 
     `client`：不传就自建一个**直连**客户端。实测登录/建 Key 与注册出口无关，
@@ -702,9 +719,9 @@ def stage_login_key(rec: AccountRecord, *, client: OpcClient = None,
     # ── 校验（非致命）────────────────────────────────────────
     if verify:
         try:
-            ok, why = OpcClient.wait_until_active(rec.api_key,
-                                                  base=rec.base_url,
-                                                  attempts=3, delay=3.0)
+            ok, why = OpcClient.wait_until_active(
+                rec.api_key, base=rec.base_url, attempts=3, delay=3.0
+            )
             rec.stages["verify"] = why
             rec.key_verified = bool(ok)
             log(f"key verify: {why}")
@@ -739,15 +756,15 @@ def verify_keys(records: list, *, verbose: bool = True, log=print) -> None:
       可能是历史批次用的地址，拿今天的配置去校验昨天的 key 会得出错误结论。
       `base_url` 为空的记录（老台账）才回落到配置默认值。
     """
-    targets = [r for r in records
-               if r is not None and r.api_key and r.status == "success"]
+    targets = [r for r in records if r is not None and r.api_key and r.status == "success"]
     if not targets:
         return
 
     def one(rec: AccountRecord) -> tuple:
         try:
             ok, why = OpcClient.wait_until_active(
-                rec.api_key, base=rec.base_url or None, attempts=3, delay=3.0)
+                rec.api_key, base=rec.base_url or None, attempts=3, delay=3.0
+            )
             return rec, bool(ok), why
         except Exception as ex:
             return rec, False, f"failed: {str(ex)[:100]}"
@@ -764,10 +781,16 @@ def verify_keys(records: list, *, verbose: bool = True, log=print) -> None:
 # ────────────────────────────────────────────────────────────────
 # 单账号（顺序执行，便于调试）
 # ────────────────────────────────────────────────────────────────
-def run_one(*, key_name: str = "default", mail_domain: str = None,
-            proxy: str = None, verbose: bool = True,
-            verify: bool = True, probe: bool = False,
-            invite_code: str = None) -> AccountRecord:
+def run_one(
+    *,
+    key_name: str = "default",
+    mail_domain: str = None,
+    proxy: str = None,
+    verbose: bool = True,
+    verify: bool = True,
+    probe: bool = False,
+    invite_code: str = None,
+) -> AccountRecord:
     """完整跑通一个账号。`proxy` 不传时用 `FO_PROXY`（没有就直连）。
 
     `invite_code`：`None` = 用 `config.INVITE_CODE`（统一注入）；`""` = 不带码。
@@ -805,9 +828,15 @@ def run_one(*, key_name: str = "default", mail_domain: str = None,
     rec.egress = scope
     rec.proxy_slot = proxy or "(direct)"
 
-    if not stage_register(mail, client, rec, quota_scope=scope,
-                          mail_domain=mail_domain, invite_code=invite_code,
-                          log=log):
+    if not stage_register(
+        mail,
+        client,
+        rec,
+        quota_scope=scope,
+        mail_domain=mail_domain,
+        invite_code=invite_code,
+        log=log,
+    ):
         rec.timings["total"] = round((time.time() - t0) * 1000)
         return rec
 
@@ -821,11 +850,19 @@ def run_one(*, key_name: str = "default", mail_domain: str = None,
 # ────────────────────────────────────────────────────────────────
 # 批量：两段式流水线
 # ────────────────────────────────────────────────────────────────
-def run_batch(*, count: int, workers: int = 4, key_name: str = "default",
-              mail_domain: str = None, verbose: bool = True,
-              reg_concurrency: int = None, ignore_quota: bool = False,
-              verify: bool = True, probe: bool = False,
-              invite_code: str = None) -> list:
+def run_batch(
+    *,
+    count: int,
+    workers: int = 4,
+    key_name: str = "default",
+    mail_domain: str = None,
+    verbose: bool = True,
+    reg_concurrency: int = None,
+    ignore_quota: bool = False,
+    verify: bool = True,
+    probe: bool = False,
+    invite_code: str = None,
+) -> list:
     """批量注册。注册阶段与登录阶段流水线并行。
 
     Args:
@@ -855,20 +892,24 @@ def run_batch(*, count: int, workers: int = 4, key_name: str = "default",
     # ── 池（必须在配额守卫之前建 —— 守卫要看"是不是池模式"）──────
     pool = build_pool(log=lambda m: print(f"[pool] {m}", flush=True))
     if pool is not None:
-        print(f"🔀 槽位代理池已启用：{pool.describe()}\n"
-              f"   每个注册生产者独占一个出口 IP"
-              f"（IP 配额触顶只判死那个出口，不中断整批）", flush=True)
+        print(
+            f"🔀 槽位代理池已启用：{pool.describe()}\n"
+            f"   每个注册生产者独占一个出口 IP"
+            f"（IP 配额触顶只判死那个出口，不中断整批）",
+            flush=True,
+        )
 
     if ignore_quota:
-        print("⚠ --ignore-quota 已开启：本地配额守卫**三个检查点**全跳过"
-              "（开跑前裁剪 / 拿租约前预筛 / 拿到租约后复查）。\n"
-              "  本地计数只是保守估计，跳过它意味着**完全依赖服务端**："
-              "真触顶会直接吃「该 IP 今日注册数量已达上限」。\n"
-              "  那是 IP 维度的日配额，**不会自己恢复** —— 请自行确认窗口已滑出。",
-              flush=True)
+        print(
+            "⚠ --ignore-quota 已开启：本地配额守卫**三个检查点**全跳过"
+            "（开跑前裁剪 / 拿租约前预筛 / 拿到租约后复查）。\n"
+            "  本地计数只是保守估计，跳过它意味着**完全依赖服务端**："
+            "真触顶会直接吃「该 IP 今日注册数量已达上限」。\n"
+            "  那是 IP 维度的日配额，**不会自己恢复** —— 请自行确认窗口已滑出。",
+            flush=True,
+        )
 
-    gov = QuotaGovernor(pool=pool, ignore=ignore_quota,
-                        log=lambda m: print(m, flush=True))
+    gov = QuotaGovernor(pool=pool, ignore=ignore_quota, log=lambda m: print(m, flush=True))
     count = gov.allow(count)
     if count <= 0:
         print("⚠ 本轮计划量为 0（本地配额已满），未发出任何请求。", flush=True)
@@ -891,13 +932,6 @@ def run_batch(*, count: int, workers: int = 4, key_name: str = "default",
 
     # ── 消费者：登录 + 建 Key（**不持有槽位租约**）──────────────
     def consumer_worker(wid: int):
-        client = OpcClient(proxy=None)
-        try:
-            client.fetch_csrf()
-        except Exception as ex:
-            with print_lock:
-                print(f"[worker {wid + 1}] ⚠ 预热 csrf 失败（后续登录会重试）：{ex}",
-                      flush=True)
         while True:
             item = q.get()
             try:
@@ -908,8 +942,30 @@ def run_batch(*, count: int, workers: int = 4, key_name: str = "default",
                     continue
                 with print_lock:
                     print(f"[{idx + 1}/{count}] login+key: {rec.email}", flush=True)
-                stage_login_key(rec, client=client, key_name=key_name,
-                                verify=False, probe=False, log=make_log(idx))
+                # 🔴 **每个账号一个独立 client（= 一个 Session）**，绝不跨账号复用。
+                #    Session 带着 cookie，而 cookie 是"某个账号的会话"；站点下发的是
+                #    会话级命名的 `server_session_xxx`，复用会让旧会话 cookie 与新账号
+                #    的并存 —— 服务端挑哪个不确定，表现成"带着 A 的 cookie 去建 B 的
+                #    key"，而且**报错与 cookie 无关**，极难定位。
+                #    成本≈0：csrf token 实测是空串，多一个 client 只是个新对象。
+                client = OpcClient(proxy=None)
+                try:
+                    client.fetch_csrf()
+                except Exception as ex:
+                    # csrf 不参与登录（token 为空、服务端不校验），预热失败只告警。
+                    with print_lock:
+                        print(
+                            f"[worker {wid + 1}] ⚠ csrf 预热失败（登录不依赖它）：{ex}",
+                            flush=True,
+                        )
+                stage_login_key(
+                    rec,
+                    client=client,
+                    key_name=key_name,
+                    verify=False,
+                    probe=False,
+                    log=make_log(idx),
+                )
             except Exception as ex:
                 rec.status = "failed"
                 rec.error = f"consumer: {str(ex)[:120]}"
@@ -917,8 +973,9 @@ def run_batch(*, count: int, workers: int = 4, key_name: str = "default",
             finally:
                 q.task_done()
 
-    consumers = [threading.Thread(target=consumer_worker, args=(i,), daemon=True)
-                 for i in range(workers)]
+    consumers = [
+        threading.Thread(target=consumer_worker, args=(i,), daemon=True) for i in range(workers)
+    ]
     for t in consumers:
         t.start()
 
@@ -936,8 +993,7 @@ def run_batch(*, count: int, workers: int = 4, key_name: str = "default",
         # 内部、限速闸门之后（理由见那里的 docstring）。
         if gov.hit():
             rec.status = "skipped"
-            rec.error = ("quota guard: 前序账号已确认 IP 配额触顶，跳过投递"
-                         "（未发请求）")
+            rec.error = "quota guard: 前序账号已确认 IP 配额触顶，跳过投递（未发请求）"
             rec.error_kind = ERR_QUOTA_GUARD
             log("跳过（配额保护）")
             q.put((idx, rec))
@@ -952,8 +1008,7 @@ def run_batch(*, count: int, workers: int = 4, key_name: str = "default",
                 # 🔴 `accept=gov.check_slot` 把"出口配额已满"的槽位**提前排除
                 #    在候选之外**（判据在 `QuotaGovernor.check_slot`）。
                 try:
-                    lease = pool.acquire(timeout=config.PROXY_SLOT_TIMEOUT,
-                                         accept=gov.check_slot)
+                    lease = pool.acquire(timeout=config.PROXY_SLOT_TIMEOUT, accept=gov.check_slot)
                 except NoEligibleSlot as ex:
                     # 有空闲槽位，但它们的出口配额全满了。配额要几小时才滑出
                     # 窗口 ⇒ 等下去毫无意义，直接记"跳过"。
@@ -987,10 +1042,17 @@ def run_batch(*, count: int, workers: int = 4, key_name: str = "default",
             #    多个 producer 同时改全局会互相踩（见 config.apply_proxy）。
             client = OpcClient(proxy=(lease.url if lease else None), log=log)
             client.fetch_csrf()
-            ok = stage_register(mail, client, rec, gate=reg_gate,
-                                quota_scope=scope, should_stop=gov.hit,
-                                mail_domain=mail_domain, invite_code=invite_code,
-                                log=log)
+            ok = stage_register(
+                mail,
+                client,
+                rec,
+                gate=reg_gate,
+                quota_scope=scope,
+                should_stop=gov.hit,
+                mail_domain=mail_domain,
+                invite_code=invite_code,
+                log=log,
+            )
         except Exception as ex:
             rec.status = "failed"
             rec.error = f"register: {ex}"
@@ -1006,12 +1068,14 @@ def run_batch(*, count: int, workers: int = 4, key_name: str = "default",
         list(ex.map(producer, range(count)))
 
     if gov.hit():
-        skipped = sum(1 for r in results
-                      if r is not None and r.status == "skipped")
+        skipped = sum(1 for r in results if r is not None and r.status == "skipped")
         if skipped:
-            print(f"⚠ 运行中确认 IP 配额触顶（连续 {QUOTA_STREAK_STOP} 个）"
-                  f"→ 跳过后续 {skipped} 个（未发请求）。\n"
-                  f"  {quota.status().describe()}", flush=True)
+            print(
+                f"⚠ 运行中确认 IP 配额触顶（连续 {QUOTA_STREAK_STOP} 个）"
+                f"→ 跳过后续 {skipped} 个（未发请求）。\n"
+                f"  {quota.status().describe()}",
+                flush=True,
+            )
 
     # 投递结束哨兵
     for _ in range(workers):
@@ -1038,13 +1102,19 @@ def run_batch(*, count: int, workers: int = 4, key_name: str = "default",
         if bans and len(bans) >= pool.size:
             # 每个出口都被判死过 —— 这是**换订阅/换节点**的信号，
             # 不是"再加并发"的信号。加并发只会更快撞穿剩下的出口。
-            print(f"   ⚠ {pool.size} 个槽位**每个**都被判死过至少一次"
-                  f"（累计 {sum(bans.values())} 次）—— 出口池整体在目标站点"
-                  f"那边都不干净了。该换订阅或换节点，加并发无效。", flush=True)
+            print(
+                f"   ⚠ {pool.size} 个槽位**每个**都被判死过至少一次"
+                f"（累计 {sum(bans.values())} 次）—— 出口池整体在目标站点"
+                f"那边都不干净了。该换订阅或换节点，加并发无效。",
+                flush=True,
+            )
         elif bans:
             clean = pool.size - len(bans)
-            print(f"   仍有 {clean}/{pool.size} 个出口从未被判死 —— "
-                  f"把并发提到 {clean} 以内是有意义的。", flush=True)
+            print(
+                f"   仍有 {clean}/{pool.size} 个出口从未被判死 —— "
+                f"把并发提到 {clean} 以内是有意义的。",
+                flush=True,
+            )
 
     elapsed = round(time.time() - t_start, 1)
     for r in results:

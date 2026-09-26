@@ -102,8 +102,11 @@ python tools/ops/recover_keys.py --apply
 ```
 
 - **生产者**持槽位租约，跑完 ③⑤ 立刻归还 —— 租约只覆盖"必须独占出口"的那一段。
-- **消费者**从队列取账号，用独立直连客户端跑 ⑥⑦。`OpcClient` 一个实例 = 一个 Session，
-  **跨账号复用会静默串号**（服务端只看到"带着 A 的 cookie 去激活 B"，报的错跟 cookie 无关）。
+- **消费者**从队列取账号，**每个账号一个独立直连客户端**跑 ⑥⑦（`consumer_worker` 在循环内
+  `OpcClient(proxy=None)`，不跨账号复用）。`OpcClient` 一个实例 = 一个 Session，
+  **跨账号复用会静默串号** —— 站点下发的是会话级命名的 `server_session_xxx` cookie，
+  复用会让旧会话与新账号的 cookie 并存、服务端挑哪个不确定（服务端只看到"带着 A 的
+  cookie 去建 B 的 key"，报的错跟 cookie 无关）。
 - 校验**挪到流水线末尾统一做**：不挡关键路径，且并发。
 
 ### 2. 两层限流，处置**完全相反**（本项目最重要的判据）
